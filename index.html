@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lesson Lab</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="app" aria-live="polite">
+    <noscript>Lesson Lab needs JavaScript turned on.</noscript>
+  </div>
+
+  <!-- App shell (order matters) -->
+  <script src="js/core.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/store.js"></script>
+
+  <!-- Mechanics: one file each. See MECHANICS.md. -->
+  <script src="mechanics/prompt-card.js"></script>
+
+  <!-- Lessons: listed in lessons/manifest.js, loaded by js/loader.js -->
+  <script src="lessons/manifest.js"></script>
+  <script src="js/loader.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
