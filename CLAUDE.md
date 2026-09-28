@@ -81,6 +81,7 @@ LL.registerLesson({
       id: "warm-up",               // PERMANENT; unique within the lesson; letters, digits, - and _
       title: "Warm-up",
       minutes: 3,                  // number above 0; drives the stage timer
+      audioCue: "Listen: Track 3", // OPTIONAL short text; metadata only (the app plays no audio)
       mechanic: "prompt-card",     // id of a registered mechanic (see MECHANICS.md)
       data: {                      // exactly the fields that mechanic's schema defines
         // Every list inside data holds objects, and every item has a PERMANENT id,
@@ -95,6 +96,8 @@ LL.registerLesson({
   ]
 });
 ```
+
+`audioCue` (optional): a short text such as `"Listen: Track 3"`. If a stage has it, a headphones badge shows next to the stage title in both student and teacher view, and in the teacher panel. It is editable in edit mode (in place and in the side panel). Leave it out when the stage has no recording. If present it must be text.
 
 To make a lesson appear, add one line to `lessons/manifest.js`: `"<level-id>/<lesson-id>.js"`. Every lesson prompt still needs this line.
 
@@ -128,6 +131,8 @@ A mechanic is one file in `mechanics/`, registered with `LL.registerMechanic({..
 | `render(root, data, ctx)` | Draws the scene content into `root`. |
 | `editor(root, ctx)`       | Draws the edit-panel form for its data (usually `root.appendChild(ctx.form())`). |
 | `css` (optional)          | A CSS string; injected once so the mechanic stays one file. Prefix classes with a short mechanic prefix. |
+| `keys` (optional)         | `[[key, what it does], …]` for its in-stage keys. Shown in the `?` overlay ("This stage") and in teacher view. |
+| `validate(data)` (optional) | Extra checks the schema cannot express (e.g. references between its lists). Returns a list of plain-word problems; runs only after the schema passes; problems are shown like any other stage problem. |
 
 Schema field spec: `{ type: "string" | "number" | "boolean" | "list" | "object", required, label, help, placeholder, multiline, min, max, format, item (for list), itemLabel (for list), fields (for object), default }`.
 
@@ -140,8 +145,9 @@ Schema field spec: `{ type: "string" | "number" | "boolean" | "list" | "object",
 - `ctx.form()` — generic form for the whole schema (lists get add / delete / reorder).
 - `ctx.set("field", value)` — change a data value (goes through undo + save).
 - `ctx.stage`, `ctx.lesson`, `ctx.stageIndex`.
+- `ctx.state` — a plain object for **live in-stage state** (what is highlighted or revealed, scores, current round). One per lesson + stage. It survives re-renders (teacher view, edits, leaving the stage and coming back) but not a page reload, and it is **never saved**. Anything the teacher toggles live belongs here, not in `data`. Mechanics must drop ids in it that no longer exist in `data`.
 
-`render` may return `{ onKey(event) → true if handled, destroy() }` for in-stage keys (e.g. reveal next item). Arrow keys, PageUp/PageDown and the global letters must keep working. Mechanic colours should use the scene variables `--ink`, `--accent`, `--accent-ink`, `--shape`.
+`render` may return `{ onKey(event) → true if handled, destroy() }` for in-stage keys (e.g. reveal next item). Arrow keys, PageUp/PageDown and the global letters must keep working. `onKey` is not called in edit mode. Keys a mechanic may use: `N B G O M V P W K` (and Shift+ variants, `Shift+1–9`); never the arrows, PageUp/PageDown, Home/End, Space, `1–9`, `X C R T E H F U A S`, Backspace, Delete, Esc, `?`, Enter. The shared meanings are listed at the top of MECHANICS.md. Mechanic colours should use the scene variables `--ink`, `--accent`, `--accent-ink`, `--shape`.
 
 Registry rejects a mechanic that is missing any required field and lists it on the home screen.
 
@@ -196,6 +202,7 @@ Backup: Export writes one `.json` file with every lesson's overrides and the con
 
 ## Key map (current)
 
+In-stage keys (per mechanic, listed by `?` and in teacher view): see MECHANICS.md.
 Lesson: `→`/`PageDown` next · `←`/`PageUp` previous · `1–9` jump · `Home`/`End` · `Space` timer start/pause · `X` reset timer · `C` fold/unfold timer (remembered) · `R` fold/unfold rail · `T` teacher view · `H`/`Backspace` back to lesson list.
 Edit: `E` toggle · `Ctrl+Z`/`U` undo · `A` add stage · `Alt+↑/↓` move stage · `Delete` delete stage · `Esc` stop typing / leave.
 Home: `S` settings.
@@ -211,4 +218,4 @@ Anywhere: `?` keys · `F` full screen · arrows + `Enter` on home · `Esc` back.
 
 ## Sample content
 
-`lessons/beginner/sample-hello.js` and `assets/sample/` are a SAMPLE that proves the loop. Delete both and the manifest line once real lessons exist (fold or clear `data/overrides/sample-hello.js` first, per the rules above).
+`lessons/beginner/sample-hello.js` and `assets/sample/` are a SAMPLE that proves the loop. `lessons/beginner/sample-mechanics.js` is a SAMPLE with one demo stage each for `reveal-board`, `drill-check`, `pair-mission` and `team-game` (and `audioCue`). Delete them and their manifest lines once real lessons exist (fold or clear `data/overrides/sample-hello.js` first, per the rules above).

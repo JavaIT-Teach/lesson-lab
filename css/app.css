@@ -278,11 +278,18 @@ kbd {
 .motif-dots .scene-bg i { border-radius: 50%; opacity: 0.8; }
 .motif-waves .scene-bg i { border-radius: 42% 58% 60% 40% / 45% 45% 55% 55%; animation-name: morph; }
 
-.scene-tag {
+.scene-head {
   position: relative;
   z-index: 2;
   align-self: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem;
   margin: 3vh 0 0 3vw;
+  max-width: calc(100% - 3vw - 20rem); /* keep clear of the HUD */
+}
+.scene-tag {
   padding: 0.35em 0.9em;
   border-radius: 99px;
   background: rgba(0, 0, 0, 0.22);
@@ -293,6 +300,29 @@ kbd {
   animation: tag-in 0.6s var(--ease) both 0.1s;
 }
 
+/* Audio cue badge (metadata only; the app plays no audio). */
+.scene-audio {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0.35em 0.9em;
+  border-radius: 99px;
+  background: var(--accent);
+  color: var(--accent-ink, #17122b);
+  font-weight: 900;
+  font-size: clamp(1rem, 1.6vw, 1.5rem);
+  box-shadow: 0 0.15em 0 rgba(0, 0, 0, 0.2);
+  animation: tag-in 0.6s var(--ease) both 0.25s;
+}
+.scene-audio-icon { display: inline-flex; width: 1.15em; height: 1.15em; }
+.scene-audio-icon svg { width: 100%; height: 100%; }
+.editing .scene-audio { animation: none; }
+.panel-audio { display: flex; align-items: center; gap: 0.5rem; margin: -0.4rem 0 1rem; font-weight: 800; color: var(--edit); }
+.panel-audio .scene-audio-icon { width: 1.2rem; height: 1.2rem; }
+.stage-keys { display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 0.8rem; margin: 0.4rem 0 0; align-items: center; }
+.stage-keys dt { text-align: right; }
+.stage-keys dd { margin: 0; font-size: 0.95rem; }
+
 .scene-content {
   position: relative;
   z-index: 1;
@@ -300,6 +330,7 @@ kbd {
   min-height: 0;
   display: flex;
   align-items: center;
+  align-items: safe center; /* tall content overflows downward, never over the stage title */
   justify-content: center;
   padding: 3vh 7vw 8vh;
 }

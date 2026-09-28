@@ -24,6 +24,7 @@
     teacher: false,
     help: false,
     timers: {},
+    runtime: {}, // live in-stage state per lesson::stage (ctx.state); memory only, never saved
     undo: [],
     lastKey: null,
     lastTime: 0,
@@ -367,9 +368,17 @@
     if (!st) {
       errorScene(content, "This lesson has no stages", S.valid.lesson);
     } else {
+      var head = h("div", { class: "scene-head" });
       var tag = h("div", { class: "scene-tag" });
       bindPath(tag, ["stages", S.stage, "title"], { placeholder: "Stage title" });
-      scene.appendChild(tag);
+      head.appendChild(tag);
+      // Optional audio cue (metadata only: the app plays no audio). Shown to students and teacher.
+      if (st.audioCue || S.editing) {
+        var cueText = h("span", { class: "scene-audio-text" });
+        bindPath(cueText, ["stages", S.stage, "audioCue"], { placeholder: "Audio cue (optional)" });
+        head.appendChild(h("div", { class: "scene-audio", title: "Audio cue" }, audioIcon(), cueText));
+      }
+      scene.appendChild(head);
 
       var problems = S.valid.stages[S.stage] || [];
       var mech = LL.mechanics[st.mechanic];
@@ -395,6 +404,20 @@
     el.stageWrap.insertBefore(scene, el.stageWrap.firstChild);
   }
 
+  function audioIcon() {
+    var i = h("span", { class: "scene-audio-icon", "aria-hidden": "true" });
+    i.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 14v-2a8 8 0 0 1 16 0v2" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>' +
+      '<rect x="3" y="13" width="5" height="8" rx="2" fill="currentColor"/><rect x="16" y="13" width="5" height="8" rx="2" fill="currentColor"/></svg>';
+    return i;
+  }
+
+  /* Live in-stage state for a mechanic (e.g. what is revealed, scores). Survives re-renders
+     (teacher view, edits, leaving and coming back); lost on page reload. Never saved. */
+  function runtimeState(st) {
+    var key = S.lessonId + "::" + st.id;
+    return S.runtime[key] || (S.runtime[key] = {});
+  }
+
   function errorScene(content, title, problems) {
     content.appendChild(
       h("div", { class: "scene-error", role: "alert" },
@@ -414,6 +437,7 @@
       stage: st,
       lesson: S.lesson,
       stageIndex: S.stage,
+      state: runtimeState(st),
       bind: function (node, key, opts) {
         bindPath(node, base.concat(String(key).split(".").map(function (k) { return /^\d+$/.test(k) ? Number(k) : k; })), opts);
       },
@@ -628,12 +652,19 @@
       problemList("Stage problems", S.valid.stages[S.stage]),
       h("h2", { class: "panel-title", text: st.title || "Untitled stage" }),
       h("p", { class: "panel-meta", text: (st.minutes || "?") + " min · " + (st.mechanic || "no mechanic") }),
+      st.audioCue ? h("p", { class: "panel-audio" }, audioIcon(), h("span", { text: st.audioCue })) : null,
       h("dl", { class: "rationale" },
         h("dt", null, "Language it forces"), h("dd", { text: r.language || "— missing —" }),
         h("dt", null, "Students produce"), h("dd", { text: r.output || "— missing —" })
       ),
       st.teacherNotes ? h("section", { class: "notes" }, h("h3", null, "Notes"), h("p", { text: st.teacherNotes })) : null,
       mech ? h("section", { class: "notes" }, h("h3", null, "Keeps everyone speaking"), h("p", { text: mech.speaking })) : null,
+      mech && mech.keys && mech.keys.length
+        ? h("section", { class: "notes" }, h("h3", null, "Keys in this stage"),
+          h("dl", { class: "stage-keys" }, mech.keys.map(function (k) {
+            return [h("dt", null, h("kbd", { text: k[0] })), h("dd", { text: k[1] })];
+          })))
+        : null,
       h("section", { class: "notes lesson-aims" },
         h("h3", null, "Lesson aims"),
         h("p", null, h("b", null, "Main: "), S.lesson.mainAim || "—"),
@@ -803,6 +834,7 @@
   var STAGE_FIELDS = {
     title: { type: "string", required: true, label: "Stage title" },
     minutes: { type: "number", required: true, label: "Minutes", min: 1 },
+    audioCue: { type: "string", label: "Audio cue", placeholder: "Listen: Track 3", help: "Optional. Shown as a badge next to the stage title. The app plays no audio." },
     rationale: {
       type: "object",
       label: "Rationale (required)",
@@ -1174,11 +1206,16 @@
     var old = document.querySelector(".help");
     if (old) old.remove();
     if (!S.help) return;
+    // The current stage's mechanic keys come first (they only work outside edit mode).
+    var groups = KEYS;
+    var st = S.route.view === "lesson" && S.lesson ? currentStage() : null;
+    var mech = st && LL.mechanics[st.mechanic];
+    if (mech && mech.keys && mech.keys.length) groups = [["This stage (" + mech.id + ")", mech.keys]].concat(KEYS);
     var box = h("div", { class: "help", role: "dialog", "aria-label": "Keyboard keys", onclick: function (e) { if (e.target === box) setHelp(false); } },
       h("div", { class: "help-card" },
         h("h2", null, "Keys"),
         h("div", { class: "help-cols" },
-          KEYS.map(function (g) {
+          groups.map(function (g) {
             return h("section", null, h("h3", { text: g[0] }),
               h("dl", null, g[1].map(function (k) {
                 return [h("dt", null, h("kbd", { text: k[0] })), h("dd", { text: k[1] })];

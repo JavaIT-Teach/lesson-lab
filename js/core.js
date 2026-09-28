@@ -75,6 +75,8 @@
       if (!m.schema || typeof m.schema !== "object") problems.push("Missing data schema.");
       if (typeof m.render !== "function") problems.push("Missing render().");
       if (typeof m.editor !== "function") problems.push("Missing editor().");
+      if (m.validate !== undefined && typeof m.validate !== "function") problems.push("'validate' must be a function (data) → [problems].");
+      if (m.keys !== undefined && !Array.isArray(m.keys)) problems.push("'keys' must be a list of [key, what it does] pairs.");
       if (LL.mechanics[m.id]) problems.push("A mechanic with this id is already registered.");
       if (m.schema && typeof m.schema === "object") listSpecProblems(m.schema, "", problems);
     }
@@ -210,11 +212,23 @@
     }
     if (stage.teacherNotes !== undefined && typeof stage.teacherNotes !== "string")
       p.push("teacherNotes must be text.");
+    // Optional audio cue: metadata only (the app plays no audio).
+    if (stage.audioCue !== undefined && typeof stage.audioCue !== "string")
+      p.push("audioCue must be text, e.g. \"Listen: Track 3\".");
     var m = LL.mechanics[stage.mechanic];
     if (isBlank(stage.mechanic)) p.push("Mechanic is missing.");
     else if (!m) p.push("Mechanic '" + stage.mechanic + "' is not registered. See MECHANICS.md.");
     else {
-      LL.validateData(m.schema, stage.data).forEach(function (s) {
+      var dataProblems = LL.validateData(m.schema, stage.data);
+      // A mechanic may add its own checks (e.g. references between its lists) once the schema passes.
+      if (!dataProblems.length && typeof m.validate === "function") {
+        try {
+          dataProblems = m.validate(stage.data) || [];
+        } catch (e) {
+          dataProblems = ["the '" + m.id + "' mechanic's own check crashed: " + (e && e.message ? e.message : e)];
+        }
+      }
+      dataProblems.forEach(function (s) {
         p.push("Data: " + s);
       });
     }
