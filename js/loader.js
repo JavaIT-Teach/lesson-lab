@@ -27,7 +27,7 @@
     function next() {
       if (i >= list.length) {
         LL._loadingPath = null;
-        return done();
+        return loadOverrides(done);
       }
       var path = list[i++];
       var before = LL._registeredCount || 0;
@@ -52,4 +52,24 @@
 
     next();
   };
+
+  /*
+   * Teacher edits committed to the repo: data/overrides/<lesson-id>.js.
+   * Each file sets window.LL.overrides[id]. A missing file just means "no edits".
+   */
+  function loadOverrides(done) {
+    LL.overrides = LL.overrides || {};
+    var ids = Object.keys(LL.lessons);
+    var left = ids.length;
+    if (!left) return done();
+    ids.forEach(function (id) {
+      var s = document.createElement("script");
+      s.src = "data/overrides/" + encodeURIComponent(id) + ".js";
+      s.onload = s.onerror = function () {
+        s.remove();
+        if (--left === 0) done();
+      };
+      document.head.appendChild(s);
+    });
+  }
 })();

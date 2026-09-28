@@ -553,3 +553,62 @@ kbd {
 @media (max-width: 900px) {
   :root { --rail-w: 150px; --panel-w: 320px; }
 }
+
+/* ================= Sync, settings, uploads (added with overrides + GitHub sync) ================= */
+
+.home-tools { position: absolute; top: 5vh; right: 6vw; display: flex; gap: 0.6rem; align-items: center; z-index: 2; }
+
+.sync-pill {
+  display: inline-block; padding: 0.3em 0.8em; border-radius: 99px;
+  font-size: 0.85rem; font-weight: 800; white-space: nowrap;
+  background: rgba(255, 255, 255, 0.1); color: var(--muted);
+}
+.sync-saved { color: var(--ok); }
+.sync-saving { color: var(--edit); }
+.sync-offline { background: #3a2e0a; color: var(--edit); }
+.sync-error { background: #3a0d1a; color: #ffb3bf; white-space: normal; max-width: 28rem; }
+.sync-view-only { color: var(--muted); }
+.hud-sync { background: rgba(0, 0, 0, 0.35); }
+.hud-sync.sync-saved, .hud-sync.sync-view-only { display: none; }
+.edit-status { margin: 0 0 1rem; color: var(--muted); font-weight: 700; font-size: 0.85rem; }
+
+.settings { padding-top: 4vh; }
+.settings .crumb { flex-wrap: wrap; }
+.settings-card {
+  position: relative; max-width: 860px; margin: 0 0 1.2rem; padding: 1.3rem 1.5rem;
+  border-radius: 22px; background: var(--panel); border: 1px solid var(--line);
+}
+.settings-card h3 { margin: 0 0 0.6rem; font-size: 1.3rem; }
+.settings-lead { margin: 0 0 0.8rem; font-weight: 700; }
+.steps { margin: 0 0 1rem; padding-left: 1.4rem; line-height: 1.55; }
+.steps li { margin-bottom: 0.3rem; }
+.settings-warn {
+  margin: 0 0 1rem; padding: 0.8rem 1rem; border-radius: 14px;
+  background: #3a2e0a; border: 2px solid var(--edit); line-height: 1.45;
+}
+.settings-form { max-width: 520px; margin-bottom: 1rem; }
+.settings-form input { width: 100%; padding: 0.55rem 0.7rem; border-radius: 10px; background: #0e0f24; border: 0; outline: 2px dashed rgba(255, 216, 77, 0.55); }
+.settings-form input:focus { outline: 2px solid var(--edit); }
+.settings-result { margin: 0.6rem 0 0; font-weight: 800; }
+.settings-result.ok { color: var(--ok); }
+.settings-result.bad { color: #ff8fa0; }
+
+.img-tools { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.4rem; }
+.img-thumb { width: 64px; height: 64px; object-fit: contain; border-radius: 10px; background: #fff; }
+.btn-upload { border-style: dashed; border-color: var(--edit); color: var(--edit); }
+
+.modal {
+  position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center;
+  padding: 3vh 3vw; background: rgba(6, 7, 20, 0.8); backdrop-filter: blur(6px);
+  animation: fade-in 0.2s ease both;
+}
+.modal-card {
+  width: min(640px, 100%); max-height: 100%; overflow: auto; padding: 1.6rem 1.8rem;
+  border-radius: 24px; background: var(--panel); border: 1px solid var(--line);
+  animation: pop-in 0.3s var(--ease) both;
+}
+.modal-card h2 { margin: 0 0 1rem; }
+.upload-preview { display: flex; justify-content: center; padding: 0.8rem; border-radius: 16px; background: #fff; }
+.upload-preview img { max-width: 100%; max-height: 46vh; object-fit: contain; }
+.upload-warn { margin: 0.8rem 0; padding: 0.6rem 0.9rem; border-radius: 12px; background: #3a2e0a; color: var(--edit); font-weight: 800; }
+.edit-bar .edit-badge, .edit-bar .btn { white-space: nowrap; }

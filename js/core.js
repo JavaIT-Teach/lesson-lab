@@ -76,6 +76,7 @@
       if (typeof m.render !== "function") problems.push("Missing render().");
       if (typeof m.editor !== "function") problems.push("Missing editor().");
       if (LL.mechanics[m.id]) problems.push("A mechanic with this id is already registered.");
+      if (m.schema && typeof m.schema === "object") listSpecProblems(m.schema, "", problems);
     }
     if (problems.length) {
       LL.mechanicErrors.push({ id: id, problems: problems });
@@ -91,6 +92,17 @@
     }
   };
 
+  /* Every list in a mechanic schema must hold objects, so each item can carry a permanent id. */
+  function listSpecProblems(schema, prefix, problems) {
+    Object.keys(schema).forEach(function (k) {
+      var f = schema[k] || {};
+      if (f.type === "list" && (!f.item || f.item.type !== "object"))
+        problems.push("Schema list '" + prefix + k + "' must have item: { type: \"object\", fields: {...} } so items can have ids.");
+      if (f.type === "list" && f.item && f.item.fields) listSpecProblems(f.item.fields, prefix + k + "[].", problems);
+      if (f.type === "object" && f.fields) listSpecProblems(f.fields, prefix + k + ".", problems);
+    });
+  }
+
   /* Default data for a schema (used when a stage is added or its mechanic changed). */
   LL.defaultsFor = function (schema, keep) {
     var out = {};
@@ -105,6 +117,13 @@
       else out[k] = "";
     });
     return out;
+  };
+
+  /* A new list item for a list field spec, with a fresh permanent id. */
+  LL.newItem = function (itemSpec) {
+    var item = LL.defaultsFor((itemSpec && itemSpec.fields) || {});
+    item.id = LL.uid("item");
+    return item;
   };
 
   /* ---------- Schema validation ----------
@@ -221,20 +240,60 @@
     if (!Array.isArray(lesson.stages) || lesson.stages.length === 0) {
       lp.push("Lesson has no stages.");
     } else {
-      var seen = {};
       lesson.stages.forEach(function (st) {
-        var sp = LL.validateStage(st);
-        if (st && st.id) {
-          if (seen[st.id]) sp.push("Stage id '" + st.id + "' is used twice in this lesson.");
-          seen[st.id] = true;
-        }
-        stages.push(sp);
+        stages.push(LL.validateStage(st));
       });
+      LL.idProblems(lesson).forEach(function (x) { lp.push(x); });
     }
     var count = lp.length;
     stages.forEach(function (s) { count += s.length; });
     return { lesson: lp, stages: stages, count: count };
   };
+
+  /* ---------- Stable ids ----------
+   * Every stage and every list item inside stage data needs a permanent id:
+   * teacher edits (overrides) are keyed by these ids, not by position.
+   */
+  var ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+  LL.ID_RE = ID_RE;
+
+  LL.idProblems = function (lesson) {
+    var p = [];
+    if (!lesson || typeof lesson !== "object") return ["Lesson is not a valid object."];
+    if (typeof lesson.id !== "string" || !ID_RE.test(lesson.id)) p.push("Lesson id '" + lesson.id + "' is missing or has characters other than letters, digits, - and _.");
+    if (!Array.isArray(lesson.stages)) return p;
+    var seen = {};
+    lesson.stages.forEach(function (st, i) {
+      var label = "Stage " + (i + 1) + (st && st.title ? " “" + st.title + "”" : "");
+      if (!st || typeof st !== "object") return p.push(label + " is not a valid object.");
+      if (typeof st.id !== "string" || !ID_RE.test(st.id)) p.push(label + " has no valid id (letters, digits, - and _ only).");
+      else if (seen[st.id]) p.push(label + ": id '" + st.id + "' is used by another stage.");
+      else seen[st.id] = true;
+      listIdProblems(st.data, label + " → data", p);
+    });
+    return p;
+  };
+
+  function listIdProblems(node, where, p) {
+    if (Array.isArray(node)) {
+      var seen = {};
+      node.forEach(function (item, i) {
+        var at = where + " item " + (i + 1);
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          p.push(at + " must be an object with an id (lists of plain values cannot be edited safely).");
+          return;
+        }
+        if (typeof item.id !== "string" || !ID_RE.test(item.id)) p.push(at + " has no valid id.");
+        else if (seen[item.id]) p.push(at + ": id '" + item.id + "' is used twice in this list.");
+        else seen[item.id] = true;
+        listIdProblems(item, at, p);
+      });
+    } else if (node && typeof node === "object") {
+      Object.keys(node).forEach(function (k) {
+        listIdProblems(node[k], where + "." + k, p);
+      });
+    }
+  }
 
   /* ---------- Lesson registry ----------
    * Lesson files call LL.registerLesson({...}). The loader sets LL._loadingPath
@@ -255,6 +314,12 @@
         path: path,
         problems: ["Lesson id '" + lesson.id + "' is already used by lessons/" + LL.lessons[lesson.id].path + "."]
       });
+      return;
+    }
+    // Missing or duplicate ids would make teacher edits land in the wrong place: reject the file.
+    var ids = LL.idProblems(lesson);
+    if (ids.length) {
+      LL.loadErrors.push({ path: path, problems: ["Lesson '" + lesson.id + "' was not loaded because of id problems:"].concat(ids) });
       return;
     }
     LL.lessons[lesson.id] = { original: LL.clone(lesson), path: path };

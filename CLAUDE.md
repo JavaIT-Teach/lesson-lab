@@ -36,21 +36,30 @@ The list is defined once, in `js/core.js` (`LL.levels`). The level id is also th
   - Lesson data is a `.js` file that calls `LL.registerLesson({...})`. Never a `.json` file loaded with `fetch`.
 - No web fonts, CDNs or remote assets. Pictures are local files under `assets/`.
 - Everything hangs off one global: `window.LL`.
+- The only network use is the optional GitHub sync (`api.github.com`, `raw.githubusercontent.com`). Without a connection the app still runs fully from the files and the device cache.
+- `tools/` holds Node scripts for maintainers (no npm packages). The app never needs them.
 
 ## Folder layout
 
 ```
 index.html                 App entry. Loads shell, mechanics, manifest, then app.
-css/app.css                Shell styles (home, player, rail, timer, panels, scene palettes).
-js/core.js                 LL namespace, level list, mechanic + lesson registries, validation.
+css/app.css                Shell styles (home, player, rail, timer, panels, scene palettes, settings).
+js/core.js                 LL namespace, level list, mechanic + lesson registries, validation, id rules.
+js/overrides.js            Overrides engine: diff / apply / merge of teacher edits (also used by tools/).
 js/ui.js                   DOM helper h() and the generic schema form used by editors.
-js/store.js                localStorage edits, prefs, backup export/import.
-js/loader.js               Loads every file in lessons/manifest.js via <script> injection.
-js/app.js                  Home, lesson player, rail, timer, teacher view, edit mode, keys.
+js/store.js                Device storage: overrides cache, conflict log, token, prefs, backup.
+js/images.js               Uploaded pictures: resize, preview, device cache (IndexedDB), src rewriting.
+js/sync.js                 GitHub sync: save overrides + uploads, load latest, status.
+js/loader.js               Loads lessons/manifest.js files, then data/overrides/<id>.js for each lesson.
+js/app.js                  Home, lesson player, rail, timer, teacher view, edit mode, settings, keys.
 mechanics/<id>.js          One file per mechanic. Shared by all lessons.
 lessons/manifest.js        List of lesson files to load (browsers cannot list folders offline).
-lessons/<level-id>/<lesson-id>.js   One self-contained lesson per file. Data only.
+lessons/<level-id>/<lesson-id>.js   Base lesson. One self-contained lesson per file. Data only.
+data/config.js             Default repo + branch for GitHub sync.
+data/overrides/<lesson-id>.js       Teacher edits for that lesson. Written by the app. Never hand-edit.
 assets/                    Local pictures. Subfolder per lesson or topic.
+assets/uploads/            Pictures uploaded in edit mode (generated names). Public.
+tools/fold-overrides.js    Folds a lesson's overrides into its lesson file and clears them.
 CLAUDE.md                  This file.
 MECHANICS.md               Catalogue of mechanics.
 ```
@@ -69,11 +78,14 @@ LL.registerLesson({
   subAims: ["…", "…"],             // list; may be empty
   stages: [                        // ordered; at least one
     {
-      id: "warm-up",               // unique within the lesson
+      id: "warm-up",               // PERMANENT; unique within the lesson; letters, digits, - and _
       title: "Warm-up",
       minutes: 3,                  // number above 0; drives the stage timer
       mechanic: "prompt-card",     // id of a registered mechanic (see MECHANICS.md)
-      data: { /* exactly the fields that mechanic's schema defines */ },
+      data: {                      // exactly the fields that mechanic's schema defines
+        // Every list inside data holds objects, and every item has a PERMANENT id,
+        // unique within its list:  items: [{ id: "q1", text: "…" }, { id: "q2", text: "…" }]
+      },
       rationale: {                 // MANDATORY
         language: "What language this stage forces",
         output: "What students produce"
@@ -84,7 +96,15 @@ LL.registerLesson({
 });
 ```
 
-To make a lesson appear, add one line to `lessons/manifest.js`: `"<level-id>/<lesson-id>.js"`.
+To make a lesson appear, add one line to `lessons/manifest.js`: `"<level-id>/<lesson-id>.js"`. Every lesson prompt still needs this line.
+
+### Ids are permanent
+
+Teacher edits are stored against ids, not positions. So:
+- Every stage, and every list item inside stage `data`, has an id. Ids use letters, digits, `-` and `_`.
+- Never rename or reuse an id. To replace a stage, give the new one a new id.
+- The loader **rejects** a lesson file with a missing, invalid or duplicate id and lists the problems on the home screen.
+- Lesson-level `subAims` is a list of plain text; it is edited as one whole value.
 
 ## Rationale is mandatory
 
@@ -109,7 +129,10 @@ A mechanic is one file in `mechanics/`, registered with `LL.registerMechanic({..
 | `editor(root, ctx)`       | Draws the edit-panel form for its data (usually `root.appendChild(ctx.form())`). |
 | `css` (optional)          | A CSS string; injected once so the mechanic stays one file. Prefix classes with a short mechanic prefix. |
 
-Schema field spec: `{ type: "string" | "number" | "boolean" | "list" | "object", required, label, help, placeholder, multiline, min, max, item (for list), itemLabel (for list), fields (for object), default }`.
+Schema field spec: `{ type: "string" | "number" | "boolean" | "list" | "object", required, label, help, placeholder, multiline, min, max, format, item (for list), itemLabel (for list), fields (for object), default }`.
+
+- A `list` must have `item: { type: "object", fields: {...} }` so every item can carry an id. The registry rejects a mechanic whose list holds plain values. New items get a generated id in edit mode.
+- A picture field is a `string` with `format: "image"`. Edit mode then shows "Upload / replace image" next to it. (Fields named `…picture`, `…image`, `…photo`, `…img` get it too, for older mechanics.)
 
 `ctx` passed to `render` and `editor`:
 - `ctx.editing`, `ctx.teacher` — current modes.
@@ -122,15 +145,46 @@ Schema field spec: `{ type: "string" | "number" | "boolean" | "list" | "object",
 
 Registry rejects a mechanic that is missing any required field and lists it on the home screen.
 
-## Edit mode (content changes without code)
+## Teacher edits: base + overrides (content changes without code)
 
-- `E` toggles edit mode. Every editable element gets a dashed yellow outline.
-- Text on the scene is edited in place. The side panel edits everything else: stage title, minutes, rationale, teacher notes, mechanic, mechanic data, lesson title/unit/aims.
-- Stages: add, duplicate, delete, move up/down. List items: add, delete, move.
-- Undo: `Ctrl+Z` / `U` / Undo button. Typing in one field within 2 s is one undo step.
-- Edits are saved as a full copy of the lesson in `localStorage` (`lessonlab.edits.v1`), keyed by lesson id. The file on disk is never changed. The edited copy shadows the file until "Reset lesson to original".
-- Backup: Export writes a `.json` file of all edited lessons; Import reads it back.
-- No GitHub sync. Do not build it unless a prompt asks for it.
+A lesson on screen is always **the newest base file + the teacher's overrides**. Neither hides the other.
+
+- **Base** = `lessons/<level>/<lesson-id>.js`. Written by Claude. The app never writes it.
+- **Overrides** = `data/overrides/<lesson-id>.js`. A patch keyed by stage and item ids: field edits, added items, deleted items, order changes. Written by the app. It sets `window.LL.overrides["<lesson-id>"]`, so it loads on `file://` too. Format: see the top of `js/overrides.js`.
+- If the base changes a field the teacher did not touch, the new base value shows. If the teacher overrode that field, the teacher's value shows.
+- An override whose stage or item no longer exists in the base cannot apply; it is kept in the file (never silently dropped).
+
+Edit mode:
+- `E` toggles edit mode. Every editable element gets a dashed yellow outline. Text on the scene is edited in place; the side panel edits everything else.
+- Stages: add, duplicate, delete, move up/down. List items: add, delete, move. Undo: `Ctrl+Z` / `U` / Undo button.
+- Every change is recorded as overrides, cached in `localStorage` (`lessonlab.overrides.v2`) for offline use.
+- "Has teacher edits" badge on a lesson = it has overrides. "Reset lesson to original" clears that lesson's overrides (on every device once saved).
+
+GitHub sync (public repo):
+- Settings (`S` on the home screen) → Save edits to GitHub. The teacher pastes a fine-grained token (Contents: Read and write, this repo only) once per device. It is stored only in that device's `localStorage`: never in the repo, never in a backup file.
+- **Without a token a device is view only** (edit mode refuses to open).
+- Edits save to `data/overrides/<lesson-id>.js` about 3 seconds after each change. Status: Saved / Saving… / Offline: will save later / Not saved: reason. Offline edits wait and save when back online.
+- On start and when a lesson opens, the app loads the latest overrides from the repo (reads need no token).
+- Two devices changed the same field: the later save wins; the other value goes to the conflict log (`lessonlab.conflicts.v1`), which is included in the backup file.
+- Every save is a commit to the sync branch (`main` by default). Expect many small "Teacher edits: <id>" commits.
+
+Pictures:
+- "Upload / replace image" appears next to every picture path field in edit mode. The picture is resized (longest side 1600 px) and previewed before it is used.
+- It is saved as `assets/uploads/<lesson>-<stage>-<random>.<ext>`; only the path is stored, as an override. The original picture file is never overwritten, so Reset brings it back.
+- Uploads are cached on the device (IndexedDB) and synced like edits. Uploaded pictures are public: never photos of students.
+
+Backup: Export writes one `.json` file with every lesson's overrides and the conflict log. Import merges it back (newest wins). Old-format backups (full edited copies) are converted on import.
+
+## Working with overrides (rules for Claude)
+
+1. The app commits teacher edits to `main`. Before any task, fetch `main` and bring it into your branch so you see the latest `data/overrides/`.
+2. **Before changing any lesson file**, read `data/overrides/<lesson-id>.js`. If it has edits, fold them into the base file and clear the overrides file:
+   `node tools/fold-overrides.js <lesson-id>` (use `--dry-run` first to preview).
+   Then **report exactly what was folded in** (the tool prints every edit, with device and time).
+3. If the tool refuses (an edit points at a stage/item that no longer exists), change nothing and ask the teacher.
+4. If a task changes a field the teacher overrode, **keep the teacher's version** unless the prompt says otherwise, and report it.
+5. **Never delete overrides without folding them in.** Never hand-edit an overrides file. Never delete files in `assets/uploads/` that a lesson or override still points to.
+6. Adding a new lesson still needs its line in `lessons/manifest.js`.
 
 ## Design principles
 
@@ -144,16 +198,17 @@ Registry rejects a mechanic that is missing any required field and lists it on t
 
 Lesson: `→`/`PageDown` next · `←`/`PageUp` previous · `1–9` jump · `Home`/`End` · `Space` timer start/pause · `X` reset timer · `C` fold/unfold timer (remembered) · `R` fold/unfold rail · `T` teacher view · `H`/`Backspace` back to lesson list.
 Edit: `E` toggle · `Ctrl+Z`/`U` undo · `A` add stage · `Alt+↑/↓` move stage · `Delete` delete stage · `Esc` stop typing / leave.
+Home: `S` settings.
 Anywhere: `?` keys · `F` full screen · arrows + `Enter` on home · `Esc` back.
 
 ## Working rules for every future prompt
 
 1. Read the repo and this CLAUDE.md first.
-2. Adding a lesson means adding a lesson file (plus its one line in `lessons/manifest.js`, and any pictures in `assets/`). Do not modify existing lessons or shared code unless the prompt says so.
+2. Adding a lesson means adding a lesson file (plus its one line in `lessons/manifest.js`, and any pictures in `assets/`). Do not modify existing lessons or shared code unless the prompt says so. Before changing an existing lesson, follow "Working with overrides" above.
 3. Reuse existing mechanics listed in MECHANICS.md. Build a new mechanic only when none fits, and only if the prompt approves it.
 4. After every task, update MECHANICS.md and report which entries changed.
 5. Never regenerate or restructure the app.
 
 ## Sample content
 
-`lessons/beginner/sample-hello.js` and `assets/sample/` are a SAMPLE that proves the loop. Delete both and the manifest line once real lessons exist.
+`lessons/beginner/sample-hello.js` and `assets/sample/` are a SAMPLE that proves the loop. Delete both and the manifest line once real lessons exist (fold or clear `data/overrides/sample-hello.js` first, per the rules above).

@@ -4,6 +4,7 @@
  *   2. delete its line in lessons/manifest.js,
  *   3. delete assets/sample/.
  * Data only. No logic in lesson files.
+ * Ids (lesson, stages, list items) are permanent: teacher edits are keyed by them. Never rename one.
  */
 LL.registerLesson({
   id: "sample-hello",

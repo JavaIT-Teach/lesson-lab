@@ -46,6 +46,7 @@
   function schemaForm(schema, path, api) {
     var wrap = h("div", { class: "form" });
     Object.keys(schema).forEach(function (key) {
+      if (key === "id") return; // permanent ids are never edited by hand
       wrap.appendChild(fieldControl(schema[key], path.concat(key), schema[key].label || key, api));
     });
     return wrap;
@@ -71,6 +72,7 @@
         markValidity(input.value);
       });
       row.appendChild(input);
+      if (!spec.multiline && isImageField(spec, path) && api.uploadImage) row.appendChild(imageTools(input, path, api));
     } else if (spec.type === "number") {
       var num = h("input", { type: "number", class: "editable-outline", step: spec.step || "any" });
       num.value = typeof value === "number" ? value : "";
@@ -126,7 +128,8 @@
           api.update("list-add", function (lesson) {
             var arr = LL.getAt(lesson, path);
             if (!Array.isArray(arr)) { arr = []; LL.setAt(lesson, path, arr); }
-            var blank = itemSpec.type === "object" ? LL.defaultsFor(itemSpec.fields || {}) : itemSpec.type === "number" ? 0 : "";
+            // Object items get a permanent id; plain values (e.g. sub-aims) are replaced as a whole list.
+            var blank = itemSpec.type === "object" ? LL.newItem(itemSpec) : itemSpec.type === "number" ? 0 : "";
             arr.push(blank);
           });
           api.refresh();
@@ -154,5 +157,39 @@
     return box;
   }
 
-  LL.ui = { h: h, schemaForm: schemaForm, fieldControl: fieldControl, isBlank: isBlank };
+  /*
+   * Picture fields: format "image" in the schema, or (for mechanics written before
+   * that existed) a text field named like picture / image / photo / img.
+   */
+  function isImageField(spec, path) {
+    if (spec.format === "image") return true;
+    var key = String(path[path.length - 1]);
+    return /(picture|image|photo|img)$/i.test(key);
+  }
+
+  function imageTools(input, path, api) {
+    var thumb = h("img", { class: "img-thumb", alt: "" });
+    function refresh() {
+      var v = input.value.trim();
+      thumb.hidden = !v;
+      if (v) thumb.setAttribute("src", v);
+    }
+    thumb.addEventListener("error", function () { thumb.hidden = true; });
+    refresh();
+    input.addEventListener("input", refresh);
+    var btn = h("button", {
+      type: "button",
+      class: "btn btn-upload",
+      onclick: function (e) {
+        e.preventDefault();
+        api.uploadImage(path, input.value.trim(), function (newPath) {
+          input.value = newPath;
+          refresh();
+        });
+      }
+    }, "Upload / replace image");
+    return h("div", { class: "img-tools" }, thumb, btn);
+  }
+
+  LL.ui = { h: h, schemaForm: schemaForm, fieldControl: fieldControl, isBlank: isBlank, isImageField: isImageField };
 })();

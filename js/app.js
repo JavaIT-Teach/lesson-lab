@@ -1,7 +1,10 @@
 /*
  * Lesson Lab — app shell.
  * Home (level → lesson), lesson player (scenes, rail, timer), teacher view,
- * edit mode (inline + panel, undo, backup), keyboard map.
+ * edit mode (inline + panel, undo, backup), settings (GitHub sync), keyboard map.
+ *
+ * The lesson on screen is always: newest base file + the teacher's overrides.
+ * Edits never touch the base; they are recorded as overrides (js/overrides.js).
  */
 (function () {
   "use strict";
@@ -13,7 +16,8 @@
   var S = {
     route: { view: "home" },
     lessonId: null,
-    lesson: null, // working copy (edited copy if one exists)
+    lesson: null, // working copy = base + overrides
+    derived: null, // the overrides doc `lesson` was built from
     valid: null, // result of LL.validateLesson
     stage: 0,
     editing: false,
@@ -34,6 +38,7 @@
   function parseHash() {
     var parts = (location.hash || "").replace(/^#\/?/, "").split("/").map(decodeURIComponent);
     if (parts[0] === "level" && LL.levelById(parts[1])) return { view: "level", level: parts[1] };
+    if (parts[0] === "settings") return { view: "settings" };
     if (parts[0] === "lesson" && parts[1]) return { view: "lesson", id: parts[1], stage: Math.max(0, (parseInt(parts[2], 10) || 1) - 1) };
     return { view: "home" };
   }
@@ -57,7 +62,9 @@
       S.teacher = false;
       S.lessonId = null;
       S.lesson = null;
-      renderHome();
+      S.derived = null;
+      if (r.view === "settings") renderSettings();
+      else renderHome();
     } else {
       openLesson(r.id, r.stage);
     }
@@ -103,6 +110,12 @@
       h("p", { class: "brand-sub", text: "Cambridge Learning Centre" })
     );
     screen.appendChild(header);
+    screen.appendChild(
+      h("div", { class: "home-tools" },
+        syncPill(),
+        h("button", { class: "btn", onclick: function () { go("#/settings"); }, title: "Settings (S)" }, "⚙ Settings")
+      )
+    );
 
     if (r.view === "home") {
       var grid = h("nav", { class: "tiles levels", "aria-label": "Levels" });
@@ -143,7 +156,7 @@
             h("span", { class: "tile-aim", text: x.lesson.mainAim || "" }),
             h("span", { class: "tile-meta" },
               (x.lesson.stages || []).length + " stages · " + mins + " min",
-              LL.store.hasEdit(x.id) ? h("em", { class: "badge badge-edit", text: "Edited on this device" }) : null,
+              LL.store.hasEdits(x.id) ? h("em", { class: "badge badge-edit", text: "Has teacher edits" }) : null,
               x.valid.count ? h("em", { class: "badge badge-warn", text: "⚠ " + x.valid.count + (x.valid.count === 1 ? " problem" : " problems") }) : null
             )
           )
@@ -154,7 +167,7 @@
 
     var probs = problemsBox();
     if (probs) screen.appendChild(probs);
-    screen.appendChild(h("p", { class: "home-hint" }, "Arrow keys to move · Enter to open · ", h("kbd", null, "?"), " for all keys"));
+    screen.appendChild(h("p", { class: "home-hint" }, "Arrow keys to move · Enter to open · ", h("kbd", null, "S"), " settings · ", h("kbd", null, "?"), " for all keys"));
     root.appendChild(screen);
     renderHelp();
 
@@ -188,6 +201,7 @@
   function openLesson(id, stageIndex) {
     stopTicking();
     S.lessonId = id;
+    S.derived = LL.clone(LL.store.doc(id));
     S.lesson = LL.store.effectiveLesson(id);
     S.undo = [];
     S.lastKey = null;
@@ -208,6 +222,8 @@
     buildPlayer();
     renderAll(1);
     startTicking();
+    LL.sync.pullOne(id); // newest teacher edits from the repo; onRemoteChange refreshes
+
   }
 
   function revalidate() {
@@ -234,6 +250,7 @@
       '<circle class="t-fill" cx="50" cy="50" r="44" pathLength="100"/></svg><span class="t-text"></span>';
     el.lessonWarn = h("button", { class: "hud-warn", title: "This lesson has problems (open teacher view)", onclick: function () { setTeacher(true); } });
     el.hud.appendChild(el.lessonWarn);
+    el.hud.appendChild(syncPill("hud-sync"));
     el.hud.appendChild(el.timer);
     el.hudButtons = h(
       "div",
@@ -573,11 +590,15 @@
 
   function setEditing(on, quiet) {
     if (!S.lesson) return;
+    if (on && !LL.store.canEdit()) {
+      toast("View only on this device. To edit, add a GitHub token in Settings (S on the home screen).", true);
+      return;
+    }
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     S.editing = on;
     S.lastKey = null;
     renderAll(0);
-    if (on && !quiet) toast("Edit mode — changes save on this device. Ctrl+Z undoes.");
+    if (on && !quiet) toast("Edit mode — changes save to GitHub a few seconds after each edit. Ctrl+Z undoes.");
   }
 
   function renderPanel() {
@@ -625,12 +646,31 @@
 
   /* ================= Edit mode ================= */
 
-  var saveTimer = null;
-  function persistSoon() {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(function () {
-      if (!LL.store.saveLesson(LL.clone(S.lesson))) toast(LL.store.lastError, true);
-    }, 250);
+  /*
+   * Record the working lesson as overrides, then rebuild the working lesson from
+   * the stored doc (it may include edits merged in from another device).
+   */
+  function commit() {
+    var doc = LL.store.recordEdit(S.lessonId, LL.clone(S.lesson), S.derived);
+    if (!doc) return toast(LL.store.lastError || "Could not save this edit.", true);
+    S.derived = LL.clone(doc);
+    var stageId = currentStage() && currentStage().id;
+    S.lesson = LL.store.effectiveLesson(S.lessonId);
+    keepStage(stageId);
+    announceConflicts();
+  }
+
+  function keepStage(stageId) {
+    var i = stages().map(function (x) { return x.id; }).indexOf(stageId);
+    if (i !== -1) S.stage = i;
+    S.stage = Math.max(0, Math.min(S.stage, stages().length - 1));
+  }
+
+  function announceConflicts() {
+    var n = LL.store.newConflicts || 0;
+    if (!n) return;
+    LL.store.newConflicts = 0;
+    toast(n + (n === 1 ? " edit clashed" : " edits clashed") + " with another device. The later save was kept; the other is in the backup file’s conflict log.");
   }
 
   function pushUndo() {
@@ -649,8 +689,8 @@
     S.lastKey = key;
     S.lastTime = now;
     fn(S.lesson);
+    commit();
     revalidate();
-    persistSoon();
     applyPlayerClasses();
     renderRail();
     if (opts.scene !== false) renderScene(0);
@@ -669,6 +709,15 @@
     },
     refresh: function () {
       renderPanel();
+    },
+    /* Upload / replace a picture; the new path is stored as an override. */
+    uploadImage: function (path, current, done) {
+      var st = currentStage();
+      LL.images.choose({ name: S.lessonId + "-" + (st ? st.id : "lesson"), current: current }, function (newPath) {
+        editApi.set(path, newPath);
+        done(newPath);
+        toast("Picture saved on this device" + (LL.store.canEdit() ? "; uploading to GitHub." : "."));
+      });
     }
   };
 
@@ -678,8 +727,8 @@
     S.lesson = snap.lesson;
     S.stage = Math.max(0, Math.min(snap.stage, stages().length - 1));
     S.lastKey = null;
+    commit();
     revalidate();
-    persistSoon();
     renderAll(0);
     toast("Undone.");
   }
@@ -784,6 +833,8 @@
       )
     );
 
+    box.appendChild(h("p", { class: "edit-status" }, "GitHub: ", syncPill("edit-sync")));
+
     el.panelProblems = h("div", { class: "panel-problem-slot" });
     box.appendChild(el.panelProblems);
     refreshPanelProblems();
@@ -853,16 +904,18 @@
 
     box.appendChild(
       h("section", { class: "edit-section" },
-        h("h3", null, "Backup"),
+        h("h3", null, "Teacher edits & backup"),
         h("p", { class: "field-help" },
-          LL.store.hasEdit(S.lessonId) ? "This lesson has edits saved on this device." : "This lesson matches its file (no edits)."),
+          LL.store.hasEdits(S.lessonId)
+            ? "This lesson has teacher edits (kept separately from the lesson file, in data/overrides/" + S.lessonId + ".js)."
+            : "This lesson has no teacher edits: it shows the lesson file as written."),
         h("div", { class: "stage-ops" },
           h("button", { class: "btn", onclick: function () {
             var n = LL.store.exportBackup();
             toast(n ? "Backup downloaded (" + n + (n === 1 ? " edited lesson)." : " edited lessons).") : "Backup downloaded (no edits yet).");
           } }, "Export backup"),
           h("button", { class: "btn", onclick: function () { fileInput.click(); } }, "Import backup"),
-          h("button", { class: "btn btn-danger", onclick: resetToOriginal }, "Reset lesson to original")
+          h("button", { class: "btn btn-danger", onclick: resetToOriginal, title: "Clears this lesson’s teacher edits" }, "Reset lesson to original")
         ),
         fileInput
       )
@@ -881,12 +934,201 @@
   }
 
   function resetToOriginal() {
-    if (!window.confirm("Throw away all edits to this lesson on this device and go back to the lesson file? Export a backup first if unsure.")) return;
+    if (!window.confirm("Clear all teacher edits to this lesson (on every device, once saved) and go back to the lesson file? Export a backup first if unsure.")) return;
     LL.store.resetLesson(S.lessonId);
     var stage = S.stage;
     openLesson(S.lessonId, stage);
     setEditing(true, true);
-    toast("Lesson reset to its file.");
+    toast("Teacher edits cleared. The lesson shows its file again.");
+  }
+
+  /* ================= Sync status ================= */
+
+  function syncPill(extra) {
+    var pill = h("span", { class: "sync-pill " + (extra || ""), role: "status" });
+    paintPill(pill);
+    return pill;
+  }
+
+  function paintPill(pill) {
+    var st = LL.sync.state.status;
+    pill.textContent = LL.sync.label();
+    pill.className = pill.className.replace(/\bsync-(saved|saving|offline|error|view-only)\b/g, "").trim() + " sync-" + st;
+    pill.title = st === "error" ? LL.sync.state.message : st === "view-only" ? "Add a GitHub token in Settings to edit on this device." : "";
+  }
+
+  LL.sync.onStatus(function () {
+    Array.prototype.forEach.call(document.querySelectorAll(".sync-pill"), paintPill);
+    announceConflicts();
+  });
+
+  /* Another device's edits arrived (pull, or merged during a save). */
+  LL.sync.onRemoteChange(function (id) {
+    announceConflicts();
+    if (S.route.view === "level" || S.route.view === "home") return renderHome();
+    if (S.route.view !== "lesson" || S.lessonId !== id || !S.lesson) return;
+    var stageId = currentStage() && currentStage().id;
+    S.derived = LL.clone(LL.store.doc(id));
+    S.lesson = LL.store.effectiveLesson(id);
+    keepStage(stageId);
+    revalidate();
+    var active = document.activeElement;
+    if (isTyping(active)) {
+      // Don't yank the field the teacher is typing in.
+      applyPlayerClasses();
+      renderRail();
+      if (!el.stageWrap.contains(active)) renderScene(0);
+      refreshPanelProblems();
+    } else {
+      renderAll(0);
+    }
+  });
+
+  /* ================= Settings ================= */
+
+  function renderSettings() {
+    root.innerHTML = "";
+    var g = LL.store.github();
+    var screen = h("div", { class: "home settings" });
+    screen.appendChild(h("div", { class: "home-bg", "aria-hidden": "true" }, h("i"), h("i"), h("i"), h("i"), h("i")));
+    screen.appendChild(
+      h("div", { class: "crumb" },
+        h("button", { class: "back", onclick: function () { go("#/"); }, title: "Back (Esc)" }, "←"),
+        h("h2", { class: "crumb-title", text: "Settings" }),
+        syncPill()
+      )
+    );
+
+    var repoIn = h("input", { type: "text", value: g.repo, placeholder: "owner/repo", spellcheck: "false", autocomplete: "off" });
+    var branchIn = h("input", { type: "text", value: g.branch, placeholder: "main", spellcheck: "false", autocomplete: "off" });
+    var tokenIn = h("input", { type: "password", value: "", placeholder: g.token ? "Saved on this device — paste a new one to replace it" : "github_pat_…", autocomplete: "off", spellcheck: "false" });
+    var result = h("p", { class: "settings-result", role: "status" });
+
+    function showResult(msg, ok) {
+      result.textContent = msg;
+      result.className = "settings-result " + (ok ? "ok" : "bad");
+    }
+
+    function save() {
+      var repo = repoIn.value.trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "").replace(/\/+$/, "");
+      if (!/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(repo)) return showResult("Repository must look like owner/name, e.g. JavaIT-Teach/lesson-lab.", false);
+      var patch = { repo: repo, branch: branchIn.value.trim() || "main" };
+      var tok = tokenIn.value.trim();
+      if (tok) patch.token = tok;
+      var before = LL.store.github();
+      LL.store.setGithub(patch);
+      showResult("Checking with GitHub…", true);
+      LL.sync.testToken().then(function (d) {
+        tokenIn.value = "";
+        showResult("Connected. This device can save edits to " + d.full_name + ".", true);
+        LL.sync.init();
+        LL.sync.pullAll();
+        LL.sync.flush();
+        renderSettingsStatus();
+      }, function (e) {
+        if (tok) LL.store.setGithub({ token: before.token || null }); // keep the old, working token
+        showResult(e.message, false);
+      });
+    }
+
+    function forget() {
+      if (!window.confirm("Remove the GitHub token from this device? It becomes view only. Unsaved edits stay here and save when a token is added again.")) return;
+      LL.store.setGithub({ token: null });
+      LL.sync.init();
+      showResult("Token removed. This device is view only.", true);
+      renderSettingsStatus();
+    }
+
+    var owner = (g.repo || "JavaIT-Teach/lesson-lab").split("/");
+    screen.appendChild(
+      h("section", { class: "settings-card" },
+        h("h3", null, "Save edits to GitHub"),
+        h("p", { class: "settings-lead" },
+          LL.store.canEdit()
+            ? "This device has a token. Edits save to the repo a few seconds after each change."
+            : "This device is view only. Paste a GitHub token once to edit on this device."),
+        h("ol", { class: "steps" },
+          h("li", null, "On this computer, sign in to GitHub with the account that can change the repo ", h("b", null, g.repo || "owner/repo"), "."),
+          h("li", null, "Open ", h("b", null, "github.com/settings/personal-access-tokens/new"),
+            " (GitHub → your picture → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token)."),
+          h("li", null, "Token name: ", h("b", null, "Lesson Lab – " + (navigator.platform || "this computer")), ". Expiration: up to 1 year. When it expires, edits stop saving and this page tells you."),
+          h("li", null, "Resource owner: ", h("b", null, owner[0]), ". (If it is an organisation, an owner may have to approve the token.)"),
+          h("li", null, "Repository access: ", h("b", null, "Only select repositories"), " → ", h("b", null, owner[1] || "lesson-lab"), ". Nothing else."),
+          h("li", null, "Permissions → Repository permissions → ", h("b", null, "Contents: Read and write"), ". Leave everything else as “No access” (Metadata: Read-only is added automatically)."),
+          h("li", null, "Click ", h("b", null, "Generate token"), ", copy it (starts with github_pat_), paste it below, and press ", h("b", null, "Save and test"), ".")
+        ),
+        h("div", { class: "settings-warn" },
+          h("b", null, "The repo is public. "),
+          "Everything saved — lesson edits and uploaded pictures — can be seen by anyone. ",
+          h("b", null, "Never upload photos of students"), " or personal details. ",
+          "The token stays on this device only: it is never saved to the repo or put in backup files. ",
+          "Treat it like a password; on a shared computer, press “Forget token” when you finish."
+        ),
+        h("div", { class: "form settings-form" },
+          h("label", { class: "field" }, h("span", { class: "field-label", text: "Repository (owner/name)" }), repoIn),
+          h("label", { class: "field" }, h("span", { class: "field-label", text: "Branch" }), branchIn),
+          h("label", { class: "field" }, h("span", { class: "field-label", text: "Fine-grained token" }), tokenIn)
+        ),
+        h("div", { class: "stage-ops" },
+          h("button", { class: "btn btn-primary", onclick: save }, "Save and test"),
+          g.token ? h("button", { class: "btn btn-danger", onclick: forget }, "Forget token") : null
+        ),
+        result
+      )
+    );
+
+    el.settingsStatus = h("section", { class: "settings-card" });
+    screen.appendChild(el.settingsStatus);
+    renderSettingsStatus();
+
+    var fileInput = h("input", { type: "file", accept: ".json,application/json", hidden: true });
+    fileInput.addEventListener("change", function () {
+      var f = fileInput.files[0];
+      if (!f) return;
+      LL.store.importBackup(f, function (err, res) {
+        if (err) return toast(err, true);
+        var msg = "Imported " + res.count + (res.count === 1 ? " lesson." : " lessons.");
+        if (res.unknown.length) msg += " Not on this app (kept, hidden): " + res.unknown.join(", ") + ".";
+        if (!LL.store.canEdit()) msg += " View only: they show here but will not save to GitHub until a token is added.";
+        toast(msg);
+        renderSettingsStatus();
+      });
+    });
+    screen.appendChild(
+      h("section", { class: "settings-card" },
+        h("h3", null, "Backup"),
+        h("p", { class: "field-help" }, "A backup file holds every lesson’s teacher edits and the conflict log. It never contains the token."),
+        h("div", { class: "stage-ops" },
+          h("button", { class: "btn", onclick: function () {
+            var n = LL.store.exportBackup();
+            toast("Backup downloaded (" + n + (n === 1 ? " lesson with edits)." : " lessons with edits)."));
+          } }, "Export backup"),
+          h("button", { class: "btn", onclick: function () { fileInput.click(); } }, "Import backup")
+        ),
+        fileInput
+      )
+    );
+
+    root.appendChild(screen);
+    renderHelp();
+  }
+
+  function renderSettingsStatus() {
+    if (!el.settingsStatus || !document.body.contains(el.settingsStatus)) return;
+    var pending = LL.sync.pendingCount();
+    var conflicts = LL.store.conflicts().length;
+    el.settingsStatus.innerHTML = "";
+    el.settingsStatus.appendChild(h("h3", null, "Sync"));
+    el.settingsStatus.appendChild(h("p", null, syncPill(),
+      " ", pending ? pending + (pending === 1 ? " change waiting to be saved." : " changes waiting to be saved.") : "Nothing waiting."));
+    el.settingsStatus.appendChild(h("p", { class: "field-help" },
+      conflicts + (conflicts === 1 ? " conflict" : " conflicts") + " logged (when two devices changed the same thing, the later save wins; the other value is kept in the backup file)."));
+    if (LL.store.canEdit()) {
+      el.settingsStatus.appendChild(h("div", { class: "stage-ops" },
+        h("button", { class: "btn", onclick: function () { LL.sync.flush().then(renderSettingsStatus); } }, "Save now"),
+        h("button", { class: "btn", onclick: function () { LL.sync.pullAll().then(function (ids) { toast(ids.length ? "Loaded newer edits for " + ids.length + " lesson(s)." : "Already up to date."); renderSettingsStatus(); }); } }, "Load latest from GitHub")
+      ));
+    }
   }
 
   /* ================= Help & toast ================= */
@@ -911,6 +1153,9 @@
       ["Alt+↑ / Alt+↓", "Move this stage"],
       ["Delete", "Delete this stage"],
       ["Esc", "Stop typing / leave edit mode"]
+    ]],
+    ["Home screen", [
+      ["S", "Settings (GitHub sync, backup)"]
     ]],
     ["Anywhere", [
       ["?", "Show / hide keys"],
@@ -947,6 +1192,7 @@
   }
 
   var toastTimer = null;
+  LL.toast = toast;
   function toast(msg, isError) {
     var t = document.querySelector(".toast");
     if (!t) {
@@ -989,7 +1235,7 @@
       if (inLesson && S.editing) return setEditing(false);
       if (inLesson && S.teacher) return setTeacher(false);
       if (inLesson) return goLevel();
-      if (S.route.view === "level") return go("#/");
+      if (S.route.view === "level" || S.route.view === "settings") return go("#/");
       return;
     }
     if (typing) return;
@@ -1009,7 +1255,12 @@
       if (k === "ArrowLeft") { e.preventDefault(); return moveHomeFocus(-1, 0); }
       if (k === "ArrowDown") { e.preventDefault(); return moveHomeFocus(0, 1); }
       if (k === "ArrowUp") { e.preventDefault(); return moveHomeFocus(0, -1); }
+      if (S.route.view === "settings") {
+        if (k === "Backspace") { e.preventDefault(); go("#/"); }
+        return;
+      }
       if (k === "Backspace" && S.route.view === "level") { e.preventDefault(); return go("#/"); }
+      if (k === "s" || k === "S") return go("#/settings");
       if (/^[1-9]$/.test(k)) {
         var tiles = root.querySelectorAll(".tile");
         var t = tiles[Number(k) - 1];
@@ -1052,7 +1303,15 @@
   /* ================= Boot ================= */
 
   LL.loadLessons(function () {
-    window.addEventListener("hashchange", route);
-    route();
+    var migrated = LL.store.migrateOldEdits(); // one-off: old full-copy edits → overrides
+    LL.store.mergeFileOverrides(); // data/overrides/*.js as loaded with the page
+    LL.images.watch();
+    LL.images.boot(function () {
+      LL.sync.init();
+      window.addEventListener("hashchange", route);
+      route();
+      if (migrated) toast("Earlier edits on this device were converted to teacher edits (overrides).");
+      LL.sync.pullAll(); // newest edits from GitHub, if online
+    });
   });
 })();
