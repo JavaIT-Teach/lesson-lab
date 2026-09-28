@@ -9,12 +9,12 @@ window.LL.overrides["sample-hello"] = {
   "lesson": "sample-hello",
   "format": 1,
   "resetAt": 0,
-  "updatedAt": 1790594533423,
+  "updatedAt": 1790594552608,
   "entries": {
     "stages[warm-up].data.prompt": {
       "op": "set",
-      "v": "Say hello to four people. Say your name.",
-      "t": 1790594533423,
+      "v": "Say hello to people. Say your name.",
+      "t": 1790594552608,
       "by": "device-u4chzx"
     }
   }
