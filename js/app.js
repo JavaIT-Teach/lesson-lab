@@ -30,6 +30,7 @@
     homeEdit: false, // home screen: E shows the Hide control on lesson tiles
     pop: null, // edit mode: which toolbar popover is open (null = none)
     lastEditable: null, // edit mode: last text field focused (target of the list buttons)
+    lastTextPath: null, // edit mode: lesson-path of the last on-scene text focused (target of align / text size; survives the node being replaced on rerender)
     showHidden: false, // home screen: list hidden lessons (with Unhide)
     undo: [],
     lastKey: null,
@@ -585,6 +586,12 @@
    * Colour is never stored or chosen: shapes use the scene's palette variables
    * (--accent / --accent-ink), which come from the same hash of the stage id as the background.
    */
+  var DECO_HANDLES = {
+    nw: { left: 1, top: 1 }, n: { top: 1 }, ne: { right: 1, top: 1 },
+    e: { right: 1 }, se: { right: 1, bottom: 1 }, s: { bottom: 1 },
+    sw: { left: 1, bottom: 1 }, w: { left: 1 }
+  };
+
   function decorLayer(st) {
     var layer = h("div", { class: "scene-decor", "aria-hidden": S.editing ? null : "true" });
     st.decorations.forEach(function (d, j) {
@@ -592,7 +599,8 @@
       var node = h("div", { class: "deco deco-" + d.shape, "data-id": d.id });
       node.style.left = d.x + "%";
       node.style.top = d.y + "%";
-      node.style.setProperty("--deco-size", d.size);
+      node.style.setProperty("--deco-w", d.w);
+      node.style.setProperty("--deco-h", d.h);
       node.style.animationDelay = -(hash(String(d.id)) % 6000) + "ms";
       node.appendChild(h("div", { class: "deco-fill" }));
       if (d.label || S.editing) {
@@ -602,9 +610,11 @@
       }
       if (S.editing) {
         node.tabIndex = 0;
-        node.setAttribute("title", "Drag to move · corner to resize · ✕ or Delete removes");
+        node.setAttribute("title", "Drag to move · drag an edge or corner to resize · ✕ or Delete removes");
         node.appendChild(h("button", { class: "deco-del", type: "button", title: "Remove shape", "aria-label": "Remove shape", onclick: function (e) { e.stopPropagation(); removeDecoration(d.id); } }, "✕"));
-        node.appendChild(h("span", { class: "deco-resize", title: "Drag to resize", "aria-hidden": "true" }));
+        Object.keys(DECO_HANDLES).forEach(function (dir) {
+          node.appendChild(h("span", { class: "deco-handle deco-handle-" + dir, "data-handle": dir, title: "Drag to resize", "aria-hidden": "true" }));
+        });
         wireDecoration(node, layer, d);
       }
       layer.appendChild(node);
@@ -615,15 +625,29 @@
   function wireDecoration(node, layer, d) {
     node.addEventListener("pointerdown", function (e) {
       if (e.button !== 0 || e.target.closest(".deco-del")) return;
-      var resizing = !!e.target.closest(".deco-resize");
+      var handleEl = e.target.closest(".deco-handle");
+      var handle = handleEl ? handleEl.getAttribute("data-handle") : null;
       var label = node.querySelector(".deco-label");
-      if (!resizing && label && e.target === label && document.activeElement === label) return; // typing in the label
-      var box = layer.getBoundingClientRect();
+      if (!handle && label && e.target === label && document.activeElement === label) return; // typing in the label
+      var layerBox = layer.getBoundingClientRect();
       var start = { x: e.clientX, y: e.clientY };
       var moved = false;
-      var pos = { x: d.x, y: d.y, size: d.size };
+      var pos = { x: d.x, y: d.y, w: d.w, h: d.h };
       var vmin = Math.min(window.innerWidth, window.innerHeight) / 100;
-      if (resizing) e.preventDefault();
+      var minPx = LL.DECO_MIN * vmin, maxPx = LL.DECO_MAX * vmin;
+      var moves = handle && DECO_HANDLES[handle];
+      var fixed = null;
+      if (handle) {
+        e.preventDefault();
+        var r0 = node.getBoundingClientRect();
+        fixed = { left: r0.left, right: r0.right, top: r0.top, bottom: r0.bottom };
+      }
+      // Keeps the fixed endpoint in place and clamps the span to [minPx, maxPx] on the moving side.
+      function resizeEdge(rawMoving, fixedPt, movingIsStart) {
+        var span = movingIsStart ? fixedPt - rawMoving : rawMoving - fixedPt;
+        span = Math.max(minPx, Math.min(maxPx, span));
+        return movingIsStart ? fixedPt - span : fixedPt + span;
+      }
       function move(ev) {
         if (!moved && Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) < 5) return;
         if (!moved) {
@@ -633,15 +657,23 @@
           window.getSelection().removeAllRanges();
           node.classList.add("moving");
         }
-        if (resizing) {
-          var r = node.getBoundingClientRect();
-          var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-          var half = Math.max(Math.abs(ev.clientX - cx), Math.abs(ev.clientY - cy) * (d.shape === "rectangle" ? 1.5 : 1));
-          pos.size = Math.round(Math.max(3, Math.min(60, (half * 2) / vmin)) * 2) / 2;
-          node.style.setProperty("--deco-size", pos.size);
+        if (handle) {
+          var left = moves.left ? resizeEdge(ev.clientX, fixed.right, true) : fixed.left;
+          var right = moves.right ? resizeEdge(ev.clientX, fixed.left, false) : fixed.right;
+          var top = moves.top ? resizeEdge(ev.clientY, fixed.bottom, true) : fixed.top;
+          var bottom = moves.bottom ? resizeEdge(ev.clientY, fixed.top, false) : fixed.bottom;
+          var cx = (left + right) / 2, cy = (top + bottom) / 2;
+          pos.w = Math.round(((right - left) / vmin) * 2) / 2;
+          pos.h = Math.round(((bottom - top) / vmin) * 2) / 2;
+          pos.x = Math.round(Math.max(0, Math.min(100, ((cx - layerBox.left) / layerBox.width) * 100)) * 10) / 10;
+          pos.y = Math.round(Math.max(0, Math.min(100, ((cy - layerBox.top) / layerBox.height) * 100)) * 10) / 10;
+          node.style.left = pos.x + "%";
+          node.style.top = pos.y + "%";
+          node.style.setProperty("--deco-w", pos.w);
+          node.style.setProperty("--deco-h", pos.h);
         } else {
-          pos.x = Math.round(Math.max(0, Math.min(100, ((ev.clientX - box.left) / box.width) * 100)) * 10) / 10;
-          pos.y = Math.round(Math.max(0, Math.min(100, ((ev.clientY - box.top) / box.height) * 100)) * 10) / 10;
+          pos.x = Math.round(Math.max(0, Math.min(100, ((ev.clientX - layerBox.left) / layerBox.width) * 100)) * 10) / 10;
+          pos.y = Math.round(Math.max(0, Math.min(100, ((ev.clientY - layerBox.top) / layerBox.height) * 100)) * 10) / 10;
           node.style.left = pos.x + "%";
           node.style.top = pos.y + "%";
         }
@@ -652,7 +684,7 @@
         document.removeEventListener("pointercancel", up);
         if (!moved) return;
         node.classList.remove("moving");
-        updateDecoration(d.id, resizing ? { size: pos.size } : { x: pos.x, y: pos.y });
+        updateDecoration(d.id, handle ? { x: pos.x, y: pos.y, w: pos.w, h: pos.h } : { x: pos.x, y: pos.y });
       }
       document.addEventListener("pointermove", move);
       document.addEventListener("pointerup", up);
@@ -670,7 +702,7 @@
     var st = currentStage();
     if (!st) return;
     var n = (st.decorations || []).length;
-    var d = { id: LL.uid("shape"), shape: shape, x: 80 - (n % 3) * 9, y: 26 + (n % 3) * 12, size: 14 };
+    var d = { id: LL.uid("shape"), shape: shape, x: 80 - (n % 3) * 9, y: 26 + (n % 3) * 12, w: shape === "rectangle" ? 20 : 14, h: shape === "rectangle" ? 13 : 14 };
     S.pop = null;
     mutate(null, function (l) {
       var s2 = l.stages[S.stage];
@@ -678,7 +710,7 @@
     });
     renderToolbar();
     focusDecoration(d.id);
-    toast("Shape added. Drag it to move, drag its corner to resize. Its colour follows this stage.");
+    toast("Shape added. Drag to move, drag any edge or corner to resize. Its colour follows this stage.");
   }
 
   function updateDecoration(id, patch) {
@@ -751,11 +783,27 @@
     };
   }
 
+  /* Path of a bound field relative to its stage, e.g. ["stages", 2, "data", "mission"] -> "data.mission".
+     Used as the key into stage.textStyle, so the same field keeps its style across renders and mechanic edits. */
+  function textStyleKey(path) {
+    return path.slice(2).join(".");
+  }
+
+  /* Apply any teacher-set alignment / size override for this field. Layout only — never colour or font. */
+  function applyTextStyle(node, path) {
+    if (path[0] !== "stages") return;
+    var st = S.lesson.stages[path[1]];
+    var ts = st && st.textStyle && st.textStyle[textStyleKey(path)];
+    node.style.textAlign = ts && ts.align ? ts.align : "";
+    node.style.fontSize = ts && ts.size ? ts.size + "em" : "";
+  }
+
   /* Show text from the lesson at `path`; in edit mode make it editable in place. */
   function bindPath(node, path, opts) {
     opts = opts || {};
     var v = LL.getAt(S.lesson, path);
     node.textContent = v == null ? "" : String(v);
+    applyTextStyle(node, path);
     if (!S.editing) return;
     node.classList.add("editable");
     node._llPath = path;
@@ -780,7 +828,11 @@
       mutate("set:" + path.join("."), function (l) { LL.setAt(l, path, text); }, { scene: false });
     });
     node.addEventListener("blur", function () {
-      renderPanel();
+      // Not renderPanel(): that calls renderToolbar(), which always rebuilds the open popover too —
+      // if focus is moving into a toolbar/popover control (e.g. Align, Text size), that would tear the
+      // control out from under the very click causing this blur. refreshPanelProblems() only rebuilds
+      // the toolbar's own buttons (for the "!" badges), leaving an open popover alone.
+      refreshPanelProblems();
     });
   }
 
@@ -1185,6 +1237,8 @@
     undo: '<path d="M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3"/>',
     bullets: '<circle cx="5" cy="7" r="1.6" fill="currentColor"/><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="5" cy="17" r="1.6" fill="currentColor"/><path d="M10 7h10 M10 12h10 M10 17h10"/>',
     numbers: '<path d="M4 5h2v5 M4 10h3 M4 14.5a1.5 1.5 0 1 1 2.6 1L4 19h3.2 M10 7h10 M10 12h10 M10 17h10"/>',
+    align: '<path d="M4 6h16 M4 11h10 M4 16h16 M4 21h10"/>',
+    textsize: '<path d="M4 19L9 5l5 14 M5.4 14.5h7.2"/><path d="M16 19l2.6-7 2.6 7 M16.6 17h4"/>',
     shape: '<circle cx="7.5" cy="8" r="3.5"/><path d="M16.5 4l4 7h-8z"/><rect x="10" y="14" width="10" height="6" rx="1"/>',
     stage: '<circle cx="12" cy="13" r="7"/><path d="M12 9v4l3 2 M9 3h6"/>',
     why: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="0.8" fill="currentColor"/>',
@@ -1263,7 +1317,9 @@
     ));
     el.toolbar.appendChild(h("div", { class: "tb-group" },
       tbBtn("bullets", "Bulleted list: click in a text, then here (Ctrl+Shift+8)", function () { listFormat("bullet"); }, { keepFocus: true }),
-      tbBtn("numbers", "Numbered list: click in a text, then here (Ctrl+Shift+7)", function () { listFormat("number"); }, { keepFocus: true })
+      tbBtn("numbers", "Numbered list: click in a text, then here (Ctrl+Shift+7)", function () { listFormat("number"); }, { keepFocus: true }),
+      tbBtn("align", "Text align: click in a text, then here", function () { togglePop("align"); }, { pop: "align", keepFocus: true }),
+      tbBtn("textsize", "Text size: click in a text, then here", function () { togglePop("textsize"); }, { pop: "textsize", keepFocus: true })
     ));
     el.toolbar.appendChild(h("div", { class: "tb-group" },
       tbBtn("shape", "Insert a shape", function () { togglePop("shape"); }, { pop: "shape" })
@@ -1335,7 +1391,43 @@
             return h("button", { type: "button", class: "shape-pick", title: sh, "aria-label": "Insert " + sh, onclick: function () { insertShape(sh); } },
               icon(sh), h("span", { text: sh.charAt(0).toUpperCase() + sh.slice(1) }));
           })),
-          h("p", { class: "field-help", text: "Colour matches this stage automatically. Drag to move, drag the corner to resize, ✕ removes." })
+          h("p", { class: "field-help", text: "Colour matches this stage automatically. Drag to move, drag any edge or corner to resize, ✕ removes." })
+        );
+      }
+    },
+    align: {
+      title: "Text align",
+      build: function () {
+        var cur = currentStyleEntry();
+        var active = cur ? cur.value.align : null;
+        function pick(val, label) {
+          return h("button", {
+            type: "button", class: "align-pick" + (active === val ? " active" : ""),
+            onclick: function () { setTextStyle({ align: val }); }
+          }, label);
+        }
+        return h("div", { class: "pop-body" },
+          h("div", { class: "align-picks" }, pick("left", "Left"), pick("center", "Center"), pick("right", "Right"), pick(undefined, "Auto")),
+          h("p", { class: "field-help", text: cur ? "Applies to the text you last clicked on the stage." : "Click a text on the stage first, then choose here." })
+        );
+      }
+    },
+    textsize: {
+      title: "Text size",
+      build: function () {
+        var cur = currentStyleEntry();
+        var size = cur && cur.value.size ? cur.value.size : 1;
+        var slider = h("input", { type: "range", min: String(LL.TEXT_SIZE_MIN), max: String(LL.TEXT_SIZE_MAX), step: "0.05", value: String(size) });
+        var val = h("span", { class: "size-val", text: Math.round(size * 100) + "%" });
+        slider.addEventListener("input", function () { val.textContent = Math.round(slider.value * 100) + "%"; });
+        slider.addEventListener("change", function () {
+          var v = parseFloat(slider.value);
+          setTextStyle({ size: Math.abs(v - 1) < 0.01 ? undefined : v });
+        });
+        return h("div", { class: "pop-body" },
+          h("div", { class: "size-row" }, slider, val),
+          h("button", { type: "button", class: "btn", onclick: function () { setTextStyle({ size: undefined }); } }, "Reset to auto"),
+          h("p", { class: "field-help", text: cur ? "Applies to the text you last clicked on the stage." : "Click a text on the stage first, then choose here." })
         );
       }
     },
@@ -1526,6 +1618,32 @@
     }
   }
 
+  /* ---------- Text align / size: per-field layout override, stored in stage.textStyle ---------- */
+
+  function currentStyleEntry() {
+    var path = S.lastTextPath;
+    if (!path) return null;
+    var st = S.lesson.stages[path[1]];
+    if (!st) return null;
+    var key = textStyleKey(path);
+    return { stageIndex: path[1], key: key, value: (st.textStyle && st.textStyle[key]) || {} };
+  }
+
+  function setTextStyle(patch) {
+    var cur = currentStyleEntry();
+    if (!cur) return toast("Click into a text on the stage first, then choose here.");
+    mutate("textstyle:" + cur.key, function (l) {
+      var st = l.stages[cur.stageIndex];
+      var ts = st.textStyle || (st.textStyle = {});
+      var entry = Object.assign({}, ts[cur.key], patch);
+      Object.keys(entry).forEach(function (k) { if (entry[k] === undefined) delete entry[k]; });
+      if (Object.keys(entry).length) ts[cur.key] = entry;
+      else delete ts[cur.key];
+      if (!Object.keys(ts).length) delete st.textStyle;
+    }, { scene: true });
+    renderPop();
+  }
+
   // Remember the last text field the teacher clicked into (scene text or a popover field).
   document.addEventListener("focusin", function (e) {
     if (!S.editing) return;
@@ -1534,6 +1652,8 @@
         (el.pop && el.pop.contains(t) && (t.tagName === "TEXTAREA" || (t.tagName === "INPUT" && t.type === "text")))) {
       S.lastEditable = t;
     }
+    // Align / text size target the field's lesson path, not the DOM node, so it survives the rerender they cause.
+    if (t.isContentEditable && t.classList.contains("editable") && t._llPath) S.lastTextPath = t._llPath;
   });
 
   // A click outside the toolbar and the open popover closes the popover.

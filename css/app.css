@@ -554,6 +554,16 @@ kbd {
 }
 .shape-pick:hover { border-color: var(--edit); }
 .shape-pick .tb-icon { width: 36px; height: 36px; }
+.align-picks { display: flex; gap: 0.5rem; margin-bottom: 0.6rem; }
+.align-pick {
+  flex: 1; display: flex; align-items: center; justify-content: center; padding: 0.6rem 0.4rem;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); color: #fff;
+}
+.align-pick.active { border-color: var(--edit); background: rgba(255, 216, 77, 0.15); }
+.align-pick:hover { border-color: var(--edit); }
+.size-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.4rem; }
+.size-row input[type="range"] { flex: 1; }
+.size-row .size-val { min-width: 3ch; text-align: right; font-weight: 800; font-size: 0.85rem; color: var(--muted); }
 
 /* Drag handles (edit mode): rail stages and schema lists */
 .grip { flex: none; cursor: grab; user-select: none; touch-action: none; color: var(--muted); font-size: 1.1rem; line-height: 1; padding: 0.3rem 0.15rem; border-radius: 6px; }
@@ -624,12 +634,11 @@ kbd {
 /* ---------- Decorations (shapes): colour always from the scene palette, never stored ---------- */
 .scene-decor { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .deco {
-  --deco-size: 14;
-  position: absolute; width: calc(var(--deco-size) * 1vmin); height: calc(var(--deco-size) * 1vmin);
+  --deco-w: 14; --deco-h: 14;
+  position: absolute; width: calc(var(--deco-w) * 1vmin); height: calc(var(--deco-h) * 1vmin);
   transform: translate(-50%, -50%); display: flex; align-items: center; justify-content: center;
   animation: deco-bob 6s ease-in-out infinite;
 }
-.deco-rectangle { height: calc(var(--deco-size) * 0.66vmin); }
 .deco-fill { position: absolute; inset: 0; background: var(--accent); box-shadow: 0 0.8vmin 0 rgba(0, 0, 0, 0.18); }
 .deco-circle .deco-fill { border-radius: 50%; }
 .deco-rectangle .deco-fill { border-radius: 1.6vmin; }
@@ -645,11 +654,19 @@ kbd {
 .editing .deco:focus { outline: 3px solid #fff; outline-offset: 6px; }
 .editing .deco.moving { opacity: 0.85; }
 .editing .deco .deco-label.editable { outline-offset: 2px; min-width: 2ch; }
-.deco-del, .deco-resize { position: absolute; z-index: 2; display: none; }
+.deco-del, .deco-handle { position: absolute; z-index: 2; display: none; }
 .editing .deco:hover .deco-del, .editing .deco:focus-within .deco-del, .editing .deco:focus .deco-del,
-.editing .deco:hover .deco-resize, .editing .deco:focus-within .deco-resize, .editing .deco:focus .deco-resize { display: block; }
-.deco-del { top: -12px; right: -12px; width: 26px; height: 26px; border-radius: 50%; border: 0; background: #1a1400; color: #fff; font-size: 13px; line-height: 26px; padding: 0; }
-.deco-resize { right: -8px; bottom: -8px; width: 18px; height: 18px; border-radius: 5px; background: #fff; border: 3px solid #1a1400; cursor: nwse-resize; }
+.editing .deco:hover .deco-handle, .editing .deco:focus-within .deco-handle, .editing .deco:focus .deco-handle { display: block; }
+.deco-del { top: -12px; right: -12px; width: 26px; height: 26px; border-radius: 50%; border: 0; background: #1a1400; color: #fff; font-size: 13px; line-height: 26px; padding: 0; z-index: 3; }
+.deco-handle { width: 14px; height: 14px; border-radius: 4px; background: #fff; border: 3px solid #1a1400; padding: 0; }
+.deco-handle-nw { left: -7px; top: -7px; cursor: nwse-resize; }
+.deco-handle-ne { right: -7px; top: -7px; cursor: nesw-resize; }
+.deco-handle-sw { left: -7px; bottom: -7px; cursor: nesw-resize; }
+.deco-handle-se { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.deco-handle-n { left: calc(50% - 7px); top: -7px; cursor: ns-resize; }
+.deco-handle-s { left: calc(50% - 7px); bottom: -7px; cursor: ns-resize; }
+.deco-handle-w { left: -7px; top: calc(50% - 7px); cursor: ew-resize; }
+.deco-handle-e { right: -7px; top: calc(50% - 7px); cursor: ew-resize; }
 .editing .scene-bg i { animation-play-state: paused; }
 
 /* ================= Help + toast ================= */

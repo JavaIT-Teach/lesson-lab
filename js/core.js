@@ -219,6 +219,8 @@
       p.push("audioCue must be text, e.g. \"Listen: Track 3\".");
     // Optional decorative shapes. Their colour is never stored: it comes from the stage's palette.
     decorationProblems(stage.decorations).forEach(function (x) { p.push(x); });
+    // Optional per-field text style overrides (alignment, size). Never colour or font.
+    textStyleProblems(stage.textStyle).forEach(function (x) { p.push(x); });
     // Optional paired worksheet label: metadata only (shown in the lesson menu).
     if (stage.worksheetLabel !== undefined && typeof stage.worksheetLabel !== "string")
       p.push("worksheetLabel must be text, e.g. \"Worksheet Part 2\".");
@@ -243,8 +245,10 @@
   };
 
   LL.SHAPES = ["circle", "rectangle", "triangle"];
+  LL.DECO_MIN = 4;
+  LL.DECO_MAX = 70;
 
-  /* decorations: [{ id, shape, x, y, size, label? }]; x / y = centre in % of the scene, size in vmin. */
+  /* decorations: [{ id, shape, x, y, w, h, label? }]; x / y = centre in % of the scene, w / h independent size in vmin. */
   function decorationProblems(list) {
     var p = [];
     if (list === undefined) return p;
@@ -256,11 +260,41 @@
       ["x", "y"].forEach(function (k) {
         if (typeof d[k] !== "number" || isNaN(d[k]) || d[k] < 0 || d[k] > 100) p.push(at + ": " + k + " must be a number from 0 to 100.");
       });
-      if (typeof d.size !== "number" || isNaN(d.size) || d.size < 3 || d.size > 60) p.push(at + ": size must be a number from 3 to 60.");
+      ["w", "h"].forEach(function (k) {
+        if (typeof d[k] !== "number" || isNaN(d[k]) || d[k] < LL.DECO_MIN || d[k] > LL.DECO_MAX)
+          p.push(at + ": " + k + " must be a number from " + LL.DECO_MIN + " to " + LL.DECO_MAX + ".");
+      });
       if (d.label !== undefined && typeof d.label !== "string") p.push(at + ": label must be text.");
       else if (d.label && d.label.length > 40) p.push(at + ": label is longer than 40 characters — keep it short.");
       Object.keys(d).forEach(function (k) {
-        if (["id", "shape", "x", "y", "size", "label"].indexOf(k) === -1) p.push(at + ": “" + k + "” is not allowed (no colours or styles: the app chooses them).");
+        if (["id", "shape", "x", "y", "w", "h", "label"].indexOf(k) === -1) p.push(at + ": “" + k + "” is not allowed (no colour: the app chooses it).");
+      });
+    });
+    return p;
+  }
+
+  /* ---------- Per-field text style overrides ----------
+   * stage.textStyle: { "<field path under the stage>": { align?, size? } }
+   * Layout only — never colour or font. Applied to any bound text field (title, data.*, decoration labels…).
+   */
+  LL.TEXT_ALIGNS = ["left", "center", "right"];
+  LL.TEXT_SIZE_MIN = 0.6;
+  LL.TEXT_SIZE_MAX = 2.2;
+
+  function textStyleProblems(obj) {
+    var p = [];
+    if (obj === undefined) return p;
+    if (typeof obj !== "object" || Array.isArray(obj)) return ["textStyle must be a group of field-path → style entries."];
+    Object.keys(obj).forEach(function (k) {
+      var v = obj[k];
+      var at = "textStyle[\"" + k + "\"]";
+      if (!v || typeof v !== "object" || Array.isArray(v)) { p.push(at + " must be an object."); return; }
+      if (v.align !== undefined && LL.TEXT_ALIGNS.indexOf(v.align) === -1)
+        p.push(at + ".align must be one of: " + LL.TEXT_ALIGNS.join(", ") + ".");
+      if (v.size !== undefined && (typeof v.size !== "number" || isNaN(v.size) || v.size < LL.TEXT_SIZE_MIN || v.size > LL.TEXT_SIZE_MAX))
+        p.push(at + ".size must be a number from " + LL.TEXT_SIZE_MIN + " to " + LL.TEXT_SIZE_MAX + ".");
+      Object.keys(v).forEach(function (fk) {
+        if (["align", "size"].indexOf(fk) === -1) p.push(at + ": \"" + fk + "\" is not allowed (no colour or font, only align/size).");
       });
     });
     return p;
