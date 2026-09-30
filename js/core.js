@@ -221,6 +221,8 @@
     decorationProblems(stage.decorations).forEach(function (x) { p.push(x); });
     // Optional per-field text style overrides (align, size, curated colour role, free position). Never font.
     textStyleProblems(stage.textStyle).forEach(function (x) { p.push(x); });
+    // Optional groups of shapes / freed text fields (edit mode: Ctrl+G).
+    groupProblems(stage.groups).forEach(function (x) { p.push(x); });
     // Optional paired worksheet label: metadata only (shown in the lesson menu).
     if (stage.worksheetLabel !== undefined && typeof stage.worksheetLabel !== "string")
       p.push("worksheetLabel must be text, e.g. \"Worksheet Part 2\".");
@@ -244,7 +246,8 @@
     return p;
   };
 
-  LL.SHAPES = ["circle", "rectangle", "triangle"];
+  LL.SHAPES = ["circle", "rectangle", "triangle", "arrow", "line"];
+  LL.STROKE_SHAPES = ["arrow", "line"]; // drawn as a stroke, not a filled area; no label
   LL.DECO_MIN = 4;
   LL.DECO_MAX = 70;
   LL.DECO_Z = ["back", "front"];
@@ -257,8 +260,16 @@
    */
   LL.COLOR_ROLES = ["accent", "highlight", "paper"];
 
-  /* decorations: [{ id, shape, x, y, w, h, label?, color?, z? }];
-     x / y = centre in % of the scene, w / h independent size in vmin. */
+  /* Rotation (degrees, clockwise) for shapes and freed text fields: a number from 0 up to (not including) 360. */
+  function rotationProblem(v, at) {
+    if (v === undefined) return null;
+    if (typeof v !== "number" || isNaN(v) || v < 0 || v >= 360) return at + ": rotation must be a number from 0 to 359.";
+    return null;
+  }
+
+  /* decorations: [{ id, shape, x, y, w, h, label?, color?, z?, rotation?, radius?, locked? }];
+     x / y = centre in % of the scene, w / h independent size in vmin.
+     radius (rectangle only): corner rounding, 0–50 = % of the shorter side. locked: true = no move / resize / rotate. */
   function decorationProblems(list) {
     var p = [];
     if (list === undefined) return p;
@@ -274,29 +285,43 @@
         if (typeof d[k] !== "number" || isNaN(d[k]) || d[k] < LL.DECO_MIN || d[k] > LL.DECO_MAX)
           p.push(at + ": " + k + " must be a number from " + LL.DECO_MIN + " to " + LL.DECO_MAX + ".");
       });
-      if (d.label !== undefined && typeof d.label !== "string") p.push(at + ": label must be text.");
+      if (d.label !== undefined && LL.STROKE_SHAPES.indexOf(d.shape) !== -1) p.push(at + ": an " + d.shape + " has no label.");
+      else if (d.label !== undefined && typeof d.label !== "string") p.push(at + ": label must be text.");
       else if (d.label && d.label.length > 40) p.push(at + ": label is longer than 40 characters — keep it short.");
       if (d.color !== undefined && LL.COLOR_ROLES.indexOf(d.color) === -1)
         p.push(at + ": colour must be one of: " + LL.COLOR_ROLES.join(", ") + " (or left out for automatic).");
       if (d.z !== undefined && LL.DECO_Z.indexOf(d.z) === -1)
         p.push(at + ": z must be one of: " + LL.DECO_Z.join(", ") + " (or left out — same as \"back\").");
+      var rp = rotationProblem(d.rotation, at);
+      if (rp) p.push(rp);
+      if (d.radius !== undefined) {
+        if (d.shape !== "rectangle") p.push(at + ": radius (rounded corners) is only for rectangles.");
+        else if (typeof d.radius !== "number" || isNaN(d.radius) || d.radius < 0 || d.radius > 50) p.push(at + ": radius must be a number from 0 to 50.");
+      }
+      if (d.locked !== undefined && d.locked !== true) p.push(at + ": locked must be true (or left out).");
       Object.keys(d).forEach(function (k) {
-        if (["id", "shape", "x", "y", "w", "h", "label", "color", "z"].indexOf(k) === -1) p.push(at + ": “" + k + "” is not allowed.");
+        if (["id", "shape", "x", "y", "w", "h", "label", "color", "z", "rotation", "radius", "locked"].indexOf(k) === -1) p.push(at + ": “" + k + "” is not allowed.");
       });
     });
     return p;
   }
 
   /* ---------- Per-field text style overrides ----------
-   * stage.textStyle: { "<field path under the stage>": { align?, size?, color?, x?, y? } }
+   * stage.textStyle: { "<field path under the stage>": { align?, scale?, size?, color?, x?, y?, rotation?, locked? } }
+   * scale: multiplier of the field's own untouched rendered size (1 = untouched, never stored).
+   * size: LEGACY (older Text size control; a multiple of the parent's font size). Still read and shown
+   *   exactly as before, never written; the Text size control replaces it with scale.
+   * rotation / locked: only for a freed field (x / y set).
    * Layout and a curated colour choice — never an open colour picker, never font.
    * Applied to any bound text field (title, data.*, decoration labels…).
    * x / y (both present together, % of the scene): frees the field from the mechanic's normal
    * layout and positions it absolutely, like a shape. Leave both out to keep the mechanic's layout.
    */
   LL.TEXT_ALIGNS = ["left", "center", "right"];
-  LL.TEXT_SIZE_MIN = 0.6;
+  LL.TEXT_SIZE_MIN = 0.6; // legacy `size`
   LL.TEXT_SIZE_MAX = 2.2;
+  LL.TEXT_SCALE_MIN = 0.4; // `scale`: symmetric around 1 on a log scale (1 / 2.5 = 0.4)
+  LL.TEXT_SCALE_MAX = 2.5;
 
   function textStyleProblems(obj) {
     var p = [];
@@ -310,15 +335,44 @@
         p.push(at + ".align must be one of: " + LL.TEXT_ALIGNS.join(", ") + ".");
       if (v.size !== undefined && (typeof v.size !== "number" || isNaN(v.size) || v.size < LL.TEXT_SIZE_MIN || v.size > LL.TEXT_SIZE_MAX))
         p.push(at + ".size must be a number from " + LL.TEXT_SIZE_MIN + " to " + LL.TEXT_SIZE_MAX + ".");
+      if (v.scale !== undefined && (typeof v.scale !== "number" || isNaN(v.scale) || v.scale < LL.TEXT_SCALE_MIN || v.scale > LL.TEXT_SCALE_MAX))
+        p.push(at + ".scale must be a number from " + LL.TEXT_SCALE_MIN + " to " + LL.TEXT_SCALE_MAX + ".");
       if (v.color !== undefined && LL.COLOR_ROLES.indexOf(v.color) === -1)
         p.push(at + ".color must be one of: " + LL.COLOR_ROLES.join(", ") + " (or left out for automatic).");
+      var freed = v.x !== undefined && v.y !== undefined;
+      var rp = rotationProblem(v.rotation, at);
+      if (rp) p.push(rp);
+      if (v.rotation !== undefined && !freed) p.push(at + ": rotation needs a free position (x and y) — drag the text first.");
+      if (v.locked !== undefined && v.locked !== true) p.push(at + ".locked must be true (or left out).");
+      else if (v.locked && !freed) p.push(at + ": locked needs a free position (x and y).");
       if ((v.x !== undefined) !== (v.y !== undefined)) p.push(at + ": x and y must be given together (or both left out).");
       ["x", "y"].forEach(function (k2) {
         if (v[k2] !== undefined && (typeof v[k2] !== "number" || isNaN(v[k2]) || v[k2] < 0 || v[k2] > 100))
           p.push(at + "." + k2 + " must be a number from 0 to 100.");
       });
       Object.keys(v).forEach(function (fk) {
-        if (["align", "size", "color", "x", "y"].indexOf(fk) === -1) p.push(at + ": \"" + fk + "\" is not allowed (no font, only align/size/color/position).");
+        if (["align", "scale", "size", "color", "x", "y", "rotation", "locked"].indexOf(fk) === -1) p.push(at + ": \"" + fk + "\" is not allowed (no font, only align/size/color/position/rotation/lock).");
+      });
+    });
+    return p;
+  }
+
+  /* ---------- Groups (edit mode: Ctrl+G) ----------
+   * stage.groups: [{ id, members: ["shape:<decoration id>" | "text:<textStyle key>", …] }]
+   * A member that no longer exists (shape deleted, text put back in layout) is simply skipped
+   * wherever the group is used — never a problem, like any stale override.
+   */
+  function groupProblems(list) {
+    var p = [];
+    if (list === undefined) return p;
+    if (!Array.isArray(list)) return ["groups must be a list."];
+    list.forEach(function (g, i) {
+      var at = "Group " + (i + 1);
+      if (!g || typeof g !== "object" || Array.isArray(g)) return p.push(at + " is not a valid object.");
+      if (!Array.isArray(g.members) || !g.members.every(function (m) { return typeof m === "string" && /^(shape|text):./.test(m); }))
+        p.push(at + ": members must be a list of \"shape:<id>\" / \"text:<field>\" entries.");
+      Object.keys(g).forEach(function (k) {
+        if (["id", "members"].indexOf(k) === -1) p.push(at + ": “" + k + "” is not allowed.");
       });
     });
     return p;
@@ -376,6 +430,8 @@
       else seen[st.id] = true;
       listIdProblems(st.data, label + " → data", p);
       if (Array.isArray(st.decorations)) listIdProblems(st.decorations, label + " → decorations", p);
+      // Groups: each group needs its own id; members is a plain list of refs, replaced whole (like subAims).
+      if (Array.isArray(st.groups)) listIdProblems(st.groups.map(function (g) { return g && typeof g === "object" ? { id: g.id } : g; }), label + " → groups", p);
     });
     return p;
   };

@@ -33,6 +33,13 @@
     lastTextPath: null, // edit mode: lesson-path of the last on-scene text focused (target of align / text size; survives the node being replaced on rerender)
     showHidden: false, // home screen: list hidden lessons (with Unhide)
     undo: [],
+    redo: [], // undone steps, for Ctrl+Y; cleared by any new edit
+    sel: [], // edit mode: selected free elements ("shape:<id>" / "text:<key>"); memory only
+    zoom: 1, // edit mode: view zoom / pan of the scene (never changes stored positions)
+    panX: 0,
+    panY: 0,
+    spaceDown: false, // edit mode: Space held (Space + drag pans when zoomed)
+    spacePanned: false,
     lastKey: null,
     lastTime: 0,
     sceneHandle: null,
@@ -375,6 +382,9 @@
     S.derived = LL.clone(LL.store.doc(id));
     S.lesson = LL.store.effectiveLesson(id);
     S.undo = [];
+    S.redo = [];
+    S.sel = [];
+    resetZoom();
     S.lastKey = null;
     root.innerHTML = "";
     if (!S.lesson) {
@@ -444,6 +454,7 @@
     el.pop = h("div", { class: "edit-pop", role: "dialog", hidden: true });
     el.stageWrap.appendChild(el.toolbar);
     el.stageWrap.appendChild(el.pop);
+    wireZoomPan(el.stageWrap);
     el.player.appendChild(el.rail);
     el.player.appendChild(el.stageWrap);
     el.player.appendChild(el.panel);
@@ -583,19 +594,32 @@
       setTimeout(function () { o.remove(); }, 600);
     });
     el.stageWrap.insertBefore(scene, el.stageWrap.firstChild);
-    // Needs real layout (getBoundingClientRect), so only after the scene is actually in the document.
-    if (st && S.editing) attachDragHandles(scene, content);
+    // Needs real layout (computed sizes, getBoundingClientRect), so only once the scene is in the document.
+    afterSceneInsert(scene, st);
   }
 
-  /* ---------- Decorations (shapes) ----------
+  /* ================= Canvas editing: shapes and freed text fields =================
+   * A "free element" is a shape (stage.decorations[]) or a bound text field the teacher dragged out of
+   * its mechanic's layout (stage.textStyle[key] with x / y). Both are addressed by one ref string:
+   * "shape:<decoration id>" or "text:<textStyle key>" — the same strings stage.groups stores.
+   * Selection (S.sel), zoom and pan are edit-mode view state: memory only, never saved.
+   *
+   * Paint order is a hard rule (css/app.css), never DOM order: back shapes < stage content <
+   * front shapes < freed text. Freed text always paints above every shape, so a highlighter
+   * shape placed behind a dragged phrase can never hide it.
+   *
    * Colour is automatic (the scene's --accent / --accent-ink, from the hash of the stage id) unless the
    * teacher picked one of the curated LL.COLOR_ROLES. Never a free colour.
    */
   var DECO_HANDLES = {
-    nw: { left: 1, top: 1 }, n: { top: 1 }, ne: { right: 1, top: 1 },
-    e: { right: 1 }, se: { right: 1, bottom: 1 }, s: { bottom: 1 },
-    sw: { left: 1, bottom: 1 }, w: { left: 1 }
+    nw: { x: -1, y: -1 }, n: { x: 0, y: -1 }, ne: { x: 1, y: -1 }, e: { x: 1, y: 0 },
+    se: { x: 1, y: 1 }, s: { x: 0, y: 1 }, sw: { x: -1, y: 1 }, w: { x: -1, y: 0 }
   };
+  var SHAPE_DEFAULTS = { rectangle: { w: 20, h: 13 }, arrow: { w: 24, h: 6 }, line: { w: 24, h: 4 } };
+  var SNAP = 1.5; // % of the scene: centre snapping distance while dragging
+  var ANGLE_STEP = 15, ANGLE_SNAP = 4; // rotation snaps to multiples of 15° when within 4°
+  var NUDGE = 0.5, NUDGE_BIG = 2; // % of the scene per arrow key (Shift: big)
+  var ZOOM_MIN = 1, ZOOM_MAX = 4;
 
   // role -> { fill, ink } CSS values, from LL.COLOR_ROLES. Never arbitrary colour: a fixed lookup.
   var COLOR_ROLE_CSS = {
@@ -604,185 +628,1031 @@
     paper: { fill: "var(--paper)", ink: "var(--paper-ink)" }
   };
 
+  function isStroke(shape) { return LL.STROKE_SHAPES.indexOf(shape) !== -1; }
+  function round1(v) { return Math.round(v * 10) / 10; }
+  function clampPct(v) { return Math.max(0, Math.min(100, v)); }
+  function normAngle(a) { a = Math.round(a) % 360; return a < 0 ? a + 360 : a; }
+  function refKind(ref) { return ref.slice(0, ref.indexOf(":")); }
+  function refId(ref) { return ref.slice(ref.indexOf(":") + 1); }
+  function rotateCss(deg) { return deg ? "translate(-50%, -50%) rotate(" + deg + "deg)" : ""; }
+  function rectRadius(d) { return (Math.min(d.w, d.h) * d.radius / 100) + "vmin"; }
+
+  function liveScene() {
+    return el.stageWrap ? el.stageWrap.querySelector(".scene:not(.leave-fwd):not(.leave-back)") : null;
+  }
+
+  /* The stored object behind a ref on stage `st`: a decoration, or a freed field's textStyle entry. */
+  function elemData(st, ref) {
+    if (!st) return null;
+    var id = refId(ref);
+    if (refKind(ref) === "shape") {
+      var list = st.decorations || [];
+      for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return list[i];
+      return null;
+    }
+    var e = st.textStyle && st.textStyle[id];
+    return e && e.x !== undefined && e.y !== undefined ? e : null;
+  }
+
+  function elemNode(ref, scene) {
+    scene = scene || liveScene();
+    if (!scene) return null;
+    var id = CSS.escape(refId(ref));
+    return refKind(ref) === "shape" ? scene.querySelector('.deco[data-id="' + id + '"]')
+      : scene.querySelector('.scene-freepos > [data-ll-key="' + id + '"]');
+  }
+
+  /* Every free element on the stage, back to front (the order they paint in). */
+  function freeRefs(st) {
+    var out = [];
+    var list = (st && st.decorations) || [];
+    list.forEach(function (d) { if (d && d.z !== "front") out.push("shape:" + d.id); });
+    list.forEach(function (d) { if (d && d.z === "front") out.push("shape:" + d.id); });
+    Object.keys((st && st.textStyle) || {}).forEach(function (k) { if (elemData(st, "text:" + k)) out.push("text:" + k); });
+    return out;
+  }
+
+  function liveSel(st) {
+    return S.sel.filter(function (r, i) { return S.sel.indexOf(r) === i && elemData(st, r); });
+  }
+
+  function groupOf(st, ref) {
+    var gs = (st && st.groups) || [];
+    for (var i = 0; i < gs.length; i++) if (gs[i] && Array.isArray(gs[i].members) && gs[i].members.indexOf(ref) !== -1) return gs[i];
+    return null;
+  }
+
+  /* Drop dead refs from every group; a group left with fewer than 2 members dissolves. */
+  function pruneGroups(st, dead) {
+    if (!Array.isArray(st.groups)) return;
+    st.groups.forEach(function (g) { g.members = (g.members || []).filter(function (m) { return dead.indexOf(m) === -1; }); });
+    st.groups = st.groups.filter(function (g) { return g.members.length >= 2; });
+    if (!st.groups.length) delete st.groups;
+  }
+
+  /* Scene geometry in screen pixels. vmin = screen pixels per 1vmin (shape sizes), zoom included. */
+  function geo(scene) {
+    var r = scene.getBoundingClientRect();
+    return { left: r.left, top: r.top, W: r.width, H: r.height, vmin: Math.min(window.innerWidth, window.innerHeight) / 100 * S.zoom };
+  }
+
+  /* A node's box in % of the scene (axis-aligned, so it includes rotation). */
+  function boxPct(node, g) {
+    var r = node.getBoundingClientRect();
+    return { l: (r.left - g.left) / g.W * 100, r: (r.right - g.left) / g.W * 100, t: (r.top - g.top) / g.H * 100, b: (r.bottom - g.top) / g.H * 100 };
+  }
+
+  function unionBox(boxes) {
+    var u = null;
+    boxes.forEach(function (b) {
+      if (!b) return;
+      if (!u) u = { l: b.l, r: b.r, t: b.t, b: b.b };
+      else { u.l = Math.min(u.l, b.l); u.r = Math.max(u.r, b.r); u.t = Math.min(u.t, b.t); u.b = Math.max(u.b, b.b); }
+    });
+    return u;
+  }
+
+  /* Change stored fields of free elements (undefined deletes a field). One mutate = one undo step,
+     or several coalesced when `key` repeats within 2 s (same rule as typing and every drag). */
+  function patchElems(key, map) {
+    mutate(key, function (l) {
+      var st = l.stages[S.stage];
+      Object.keys(map).forEach(function (ref) {
+        var d = elemData(st, ref);
+        if (!d && refKind(ref) === "text") { // freeing a text field: its textStyle entry gains x / y
+          var ts = st.textStyle || (st.textStyle = {});
+          d = ts[refId(ref)] = Object.assign({}, ts[refId(ref)]);
+        }
+        if (!d) return;
+        var p = map[ref];
+        Object.keys(p).forEach(function (k) { if (p[k] === undefined) delete d[k]; else d[k] = p[k]; });
+      });
+    });
+  }
+
+  /* ---------- Rendering ---------- */
+
   function decorLayers(st) {
     var back = h("div", { class: "scene-decor", "aria-hidden": S.editing ? null : "true" });
     var front = h("div", { class: "scene-decor scene-decor-front", "aria-hidden": S.editing ? null : "true" });
     st.decorations.forEach(function (d, j) {
       if (!d || LL.SHAPES.indexOf(d.shape) === -1) return;
-      var layer = d.z === "front" ? front : back;
-      var node = h("div", { class: "deco deco-" + d.shape, "data-id": d.id });
+      var node = h("div", { class: "deco deco-" + d.shape + (isStroke(d.shape) ? " deco-stroke" : "") + (S.editing && d.locked ? " locked" : ""), "data-id": d.id });
       node.style.left = d.x + "%";
       node.style.top = d.y + "%";
       node.style.setProperty("--deco-w", d.w);
       node.style.setProperty("--deco-h", d.h);
+      if (d.rotation) node.style.transform = rotateCss(d.rotation);
       if (d.color && COLOR_ROLE_CSS[d.color]) {
         node.style.setProperty("--deco-fill", COLOR_ROLE_CSS[d.color].fill);
         node.style.setProperty("--deco-label-ink", COLOR_ROLE_CSS[d.color].ink);
       }
       node.style.animationDelay = -(hash(String(d.id)) % 6000) + "ms";
-      node.appendChild(h("div", { class: "deco-fill" }));
-      if (d.label || S.editing) {
-        var label = h("span", { class: "deco-label" });
-        bindPath(label, ["stages", S.stage, "decorations", j, "label"], { placeholder: "Label" });
-        node.appendChild(label);
+      if (isStroke(d.shape)) {
+        node.appendChild(h("div", { class: "deco-shaft" }));
+        if (d.shape === "arrow") node.appendChild(h("div", { class: "deco-head" }));
+      } else {
+        var fill = h("div", { class: "deco-fill" });
+        if (d.shape === "rectangle" && typeof d.radius === "number") fill.style.borderRadius = rectRadius(d);
+        node.appendChild(fill);
+        if (d.label || S.editing) {
+          var label = h("span", { class: "deco-label" });
+          bindPath(label, ["stages", S.stage, "decorations", j, "label"], { placeholder: "Label" });
+          node.appendChild(label);
+        }
       }
       if (S.editing) {
         node.tabIndex = 0;
-        node.setAttribute("title", "Drag to move · drag an edge or corner to resize · ✕ or Delete removes");
-        node.appendChild(h("button", { class: "deco-del", type: "button", title: "Remove shape", "aria-label": "Remove shape", onclick: function (e) { e.stopPropagation(); removeDecoration(d.id); } }, "✕"));
-        Object.keys(DECO_HANDLES).forEach(function (dir) {
+        node.setAttribute("title", d.locked ? "Locked — right-click or the tools to unlock" : "Drag to move · edges and corners resize · right-click for more");
+        node.appendChild(h("button", { class: "deco-del", type: "button", title: "Remove shape", "aria-label": "Remove shape", onclick: function (e) { e.stopPropagation(); deleteRefs(["shape:" + d.id]); } }, "✕"));
+        if (!d.locked) Object.keys(DECO_HANDLES).forEach(function (dir) {
           node.appendChild(h("span", { class: "deco-handle deco-handle-" + dir, "data-handle": dir, title: "Drag to resize", "aria-hidden": "true" }));
         });
-        node.appendChild(decoTools(d));
-        wireDecoration(node, layer, d);
+        wireDecoration(node, d);
       }
-      layer.appendChild(node);
+      (d.z === "front" ? front : back).appendChild(node);
     });
     return { back: back, front: front };
   }
 
-  // Colour swatches (curated roles + auto) and a front/back toggle, shown above a shape on hover/focus.
-  function decoTools(d) {
-    var box = h("div", { class: "deco-tools" });
-    box.appendChild(h("button", {
-      type: "button", class: "deco-swatch deco-swatch-auto" + (!d.color ? " active" : ""),
-      title: "Automatic colour", "aria-label": "Automatic colour",
-      onclick: function (e) { e.stopPropagation(); updateDecoration(d.id, { color: undefined }); }
-    }));
-    LL.COLOR_ROLES.forEach(function (role) {
-      var btn = h("button", {
-        type: "button", class: "deco-swatch" + (d.color === role ? " active" : ""),
-        title: role, "aria-label": role + " colour",
-        onclick: function (e) { e.stopPropagation(); updateDecoration(d.id, { color: role }); }
-      });
-      btn.style.setProperty("--sw", COLOR_ROLE_CSS[role].fill);
-      box.appendChild(btn);
+  /* After the mechanic has rendered, move any field with a stored position into the freeform layer. */
+  function applyFreePositions(scene, st) {
+    var ts = st && st.textStyle;
+    if (!ts) return;
+    Object.keys(ts).forEach(function (key) {
+      var v = ts[key];
+      if (v.x === undefined || v.y === undefined) return;
+      var node = scene.querySelector('[data-ll-key="' + CSS.escape(key) + '"]');
+      if (!node) return; // the field isn't on screen this render (e.g. an optional field left empty)
+      freeTextNode(scene, node);
+      node.style.left = v.x + "%";
+      node.style.top = v.y + "%";
+      node.style.transform = rotateCss(v.rotation);
+      node.classList.toggle("locked", !!(S.editing && v.locked));
     });
-    box.appendChild(h("button", {
-      type: "button", class: "deco-front-toggle" + (d.z === "front" ? " active" : ""),
-      title: d.z === "front" ? "In front of the stage content — click to send it behind" : "Behind the stage content — click to bring it in front",
-      "aria-label": "Toggle front / back",
-      onclick: function (e) { e.stopPropagation(); updateDecoration(d.id, { z: d.z === "front" ? undefined : "front" }); }
-    }, d.z === "front" ? "▲" : "▼"));
-    return box;
   }
 
-  function wireDecoration(node, layer, d) {
+  function freeTextNode(scene, node) {
+    var overlay = scene.querySelector(".scene-freepos") || scene.appendChild(h("div", { class: "scene-freepos" }));
+    if (node.parentElement !== overlay) overlay.appendChild(node);
+  }
+
+  /* Text size: `scale` multiplies the field's own untouched rendered size, measured live (computed
+     style with the override removed) — never a nominal constant, never the parent's size. Re-run
+     whenever layout may change (render, window resize), since mechanic sizes follow the viewport. */
+  function naturalFontPx(node) {
+    var keep = node.style.fontSize;
+    node.style.fontSize = "";
+    var px = parseFloat(window.getComputedStyle(node).fontSize) || 16;
+    node.style.fontSize = keep;
+    return px;
+  }
+
+  function applyTextScales(scene) {
+    var st = currentStage();
+    var ts = st && st.textStyle;
+    if (!ts || !scene) return;
+    Array.prototype.forEach.call(scene.querySelectorAll("[data-ll-key]"), function (node) {
+      var e = ts[node.getAttribute("data-ll-key")];
+      if (!e || !e.scale) return;
+      node.style.fontSize = "";
+      node.style.fontSize = naturalFontPx(node) * e.scale + "px";
+    });
+  }
+
+  /* Edit mode only: a drag handle over every bound text field (shape labels excluded — they move with
+     their shape), a reset button on a freed field, and a lock badge on every locked element. */
+  function attachDragHandles(scene) {
+    var old = scene.querySelector(".scene-drag-handles");
+    if (old) old.remove();
+    var overlay = h("div", { class: "scene-drag-handles" });
+    scene.appendChild(overlay);
+    var g = geo(scene);
+    var st = currentStage();
+    function place(n, x, y) { n.style.left = x + "%"; n.style.top = y + "%"; overlay.appendChild(n); }
+    Array.prototype.forEach.call(scene.querySelectorAll(".editable[data-ll-key]"), function (node) {
+      if (node.closest(".deco")) return;
+      var key = node.getAttribute("data-ll-key");
+      var ref = "text:" + key;
+      var d = elemData(st, ref);
+      var b = boxPct(node, g);
+      var cx = (b.l + b.r) / 2;
+      var handle = h("button", { type: "button", class: "drag-handle", "data-key": key, title: "Drag to move this text (Shift-click: add to selection)", "aria-label": "Drag to move this text" });
+      handle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M12 2v20 M2 12h20 M6 6l-4 6 4 6 M18 6l4 6-4 6 M6 18l6 4 6-4 M6 6l6-4 6 4"/></svg>';
+      place(handle, cx, b.t);
+      wireTextHandle(handle, node, scene, key);
+      if (d) {
+        place(h("button", {
+          type: "button", class: "drag-reset", "data-key": key, title: "Reset position (back into the layout)", "aria-label": "Reset position",
+          onclick: function () { clearTextPosition(key); }
+        }, "⤺"), cx, b.t);
+        if (d.locked) place(h("span", { class: "lock-badge", title: "Locked", text: "🔒" }), b.l, b.t);
+      }
+    });
+    ((st && st.decorations) || []).forEach(function (d) {
+      if (!d || !d.locked) return;
+      var n = elemNode("shape:" + d.id, scene);
+      if (!n) return;
+      var b = boxPct(n, g);
+      place(h("span", { class: "lock-badge", title: "Locked", text: "🔒" }), b.l, b.t);
+    });
+  }
+
+  /* Everything that needs the scene in the document (real layout): called after every render. */
+  function afterSceneInsert(scene, st) {
+    applyTextScales(scene);
+    applyZoom();
+    if (st && S.editing) {
+      attachDragHandles(scene);
+      scene.addEventListener("pointerdown", onScenePointerDown);
+      scene.addEventListener("contextmenu", onSceneContextMenu);
+    }
+    paintSelection();
+  }
+
+  var resizeTimer = null;
+  window.addEventListener("resize", function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      var scene = liveScene();
+      if (!scene || S.route.view !== "lesson") return;
+      applyTextScales(scene);
+      if (S.editing) { clampPan(scene); applyZoom(); attachDragHandles(scene); }
+      paintSelection();
+    }, 120);
+  });
+
+  /* ---------- Selection ---------- */
+
+  function paintSelection() {
+    var tools = el.stageWrap && el.stageWrap.querySelector(".sel-tools");
+    if (tools) tools.remove();
+    var scene = liveScene();
+    if (!scene) return;
+    Array.prototype.forEach.call(scene.querySelectorAll(".is-selected, .scene-selbox"), function (n) {
+      if (n.classList.contains("scene-selbox")) n.remove();
+      else n.classList.remove("is-selected");
+    });
+    var st = currentStage();
+    if (!S.editing || !st) { S.sel = []; return; }
+    S.sel = liveSel(st);
+    S.sel.forEach(function (r) {
+      var n = elemNode(r, scene);
+      if (n) n.classList.add("is-selected");
+      if (refKind(r) === "text") {
+        var hd = scene.querySelector('.drag-handle[data-key="' + CSS.escape(refId(r)) + '"]');
+        if (hd) hd.classList.add("is-selected");
+      }
+    });
+    if (S.sel.length) renderSelTools(scene, st);
+    if (S.pop === "layers") renderPop();
+  }
+
+  function setSel(refs) {
+    S.sel = refs.slice();
+    paintSelection();
+  }
+
+  function toggleSel(ref) {
+    var i = S.sel.indexOf(ref);
+    if (i === -1) S.sel.push(ref);
+    else S.sel.splice(i, 1);
+    paintSelection();
+  }
+
+  function selectGroupOf(ref) {
+    var st = currentStage();
+    var g = groupOf(st, ref);
+    if (g) setSel(g.members.filter(function (m) { return elemData(st, m); }));
+  }
+
+  /* Floating tools for the selection: above it (below when there is no room), outside the zoomed scene. */
+  function renderSelTools(scene, st) {
+    var g = geo(scene);
+    var boxes = S.sel.map(function (r) { var n = elemNode(r, scene); return n ? boxPct(n, g) : null; });
+    var u = unionBox(boxes);
+    if (!u) return;
+    var single = S.sel.length === 1 ? S.sel[0] : null;
+    var d = single ? elemData(st, single) : null;
+    // Rotation handle (single, unlocked): above the element, inside the scene.
+    if (single && !d.locked) {
+      var selbox = h("div", { class: "scene-selbox" });
+      var rh = h("button", { type: "button", class: "rot-handle", title: "Drag to rotate (snaps every 15°)", "aria-label": "Rotate" }, "↻");
+      var above = u.t - 36 / g.H * 100;
+      rh.style.left = (u.l + u.r) / 2 + "%";
+      rh.style.top = (above < 1 ? u.b + 36 / g.H * 100 : above) + "%";
+      rh.addEventListener("pointerdown", function (e) { startRotate(e, single); });
+      selbox.appendChild(rh);
+      scene.appendChild(selbox);
+    }
+    var panel = h("div", { class: "sel-tools", role: "toolbar", "aria-label": "Selection tools" }, single ? singleTools(st, single, d) : multiTools(st));
+    el.stageWrap.appendChild(panel);
+    var wrap = el.stageWrap.getBoundingClientRect();
+    var tbH = el.toolbar ? el.toolbar.offsetHeight : 0;
+    var pw = panel.offsetWidth, ph = panel.offsetHeight;
+    var cx = g.left + (u.l + u.r) / 2 / 100 * g.W - wrap.left;
+    var topPx = g.top + u.t / 100 * g.H - wrap.top - ph - 44;
+    if (topPx < tbH + 6) topPx = g.top + u.b / 100 * g.H - wrap.top + 16;
+    topPx = Math.max(tbH + 6, Math.min(wrap.height - ph - 6, topPx));
+    panel.style.left = Math.max(6, Math.min(wrap.width - pw - 6, cx - pw / 2)) + "px";
+    panel.style.top = topPx + "px";
+  }
+
+  var ALIGN_ICON = {
+    left: '<path d="M4 3v18"/><rect x="7" y="6" width="12" height="4" rx="1"/><rect x="7" y="14" width="8" height="4" rx="1"/>',
+    hcenter: '<path d="M12 3v18"/><rect x="5" y="6" width="14" height="4" rx="1"/><rect x="8" y="14" width="8" height="4" rx="1"/>',
+    right: '<path d="M20 3v18"/><rect x="5" y="6" width="12" height="4" rx="1"/><rect x="9" y="14" width="8" height="4" rx="1"/>',
+    top: '<path d="M3 4h18"/><rect x="6" y="7" width="4" height="12" rx="1"/><rect x="14" y="7" width="4" height="8" rx="1"/>',
+    vcenter: '<path d="M3 12h18"/><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="8" width="4" height="8" rx="1"/>',
+    bottom: '<path d="M3 20h18"/><rect x="6" y="5" width="4" height="12" rx="1"/><rect x="14" y="9" width="4" height="8" rx="1"/>'
+  };
+  var ALIGN_LABEL = { left: "left", hcenter: "centre (horizontally)", right: "right", top: "top", vcenter: "middle (vertically)", bottom: "bottom" };
+
+  function stBtn(act, label, fn, opts) {
+    opts = opts || {};
+    var b = h("button", { type: "button", class: "st-btn" + (opts.active ? " active" : "") + (opts.cls ? " " + opts.cls : ""), "data-act": act, title: label, "aria-label": label, onclick: fn });
+    if (opts.svg) b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + opts.svg + "</svg>";
+    else b.textContent = opts.text || label;
+    return b;
+  }
+
+  function alignButtons(toPage) {
+    return Object.keys(ALIGN_ICON).map(function (m) {
+      return stBtn((toPage ? "page-" : "align-") + m, (toPage ? "Align to page: " : "Align to each other: ") + ALIGN_LABEL[m], function () { alignSel(m, toPage); }, { svg: ALIGN_ICON[m] });
+    });
+  }
+
+  function numInput(f, label, value, min, max, stepv, onSet) {
+    var inp = h("input", { type: "number", class: "st-num", "data-f": f, "aria-label": label, title: label, min: String(min), max: String(max), step: String(stepv), value: String(value) });
+    inp.addEventListener("change", function () {
+      var v = parseFloat(inp.value);
+      if (isNaN(v)) return paintSelection();
+      onSet(v);
+    });
+    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") inp.blur(); });
+    return h("label", { class: "st-field" }, h("span", { text: label.charAt(0) === "R" ? "↻" : label.charAt(0) }), inp);
+  }
+
+  function singleTools(st, ref, d) {
+    var shape = refKind(ref) === "shape";
+    var rows = [];
+    if (shape) {
+      var r1 = [
+        swatchBtn(null, "Automatic colour", !d.color, function () { patchElems(null, oneMap(ref, { color: undefined })); })
+      ].concat(LL.COLOR_ROLES.map(function (role) {
+        return swatchBtn(role, role + " colour", d.color === role, function () { patchElems(null, oneMap(ref, { color: role })); });
+      }));
+      r1.push(stBtn("front", d.z === "front" ? "In front of the stage content — click to send behind" : "Behind the stage content — click to bring in front",
+        function () { patchElems(null, oneMap(ref, { z: d.z === "front" ? undefined : "front" })); }, { text: d.z === "front" ? "▲ Front" : "▼ Back", active: d.z === "front" }));
+      if (d.shape === "rectangle") {
+        var rad = h("input", { type: "range", class: "st-radius", "data-f": "radius", min: "0", max: "50", step: "1", value: String(typeof d.radius === "number" ? d.radius : 0), title: "Rounded corners", "aria-label": "Rounded corners" });
+        rad.addEventListener("input", function () {
+          var n = elemNode(ref);
+          var fill = n && n.querySelector(".deco-fill");
+          if (fill) fill.style.borderRadius = rectRadius({ w: d.w, h: d.h, radius: Number(rad.value) });
+        });
+        rad.addEventListener("change", function () { patchElems("radius:" + ref, oneMap(ref, { radius: Number(rad.value) })); });
+        r1.push(h("label", { class: "st-field st-radius-field", title: "Rounded corners" }, h("span", { text: "◜" }), rad));
+      }
+      rows.push(h("div", { class: "st-row" }, r1));
+    }
+    rows.push(h("div", { class: "st-row" },
+      numInput("x", "X position (% of the stage)", d.x, 0, 100, 0.5, function (v) { patchElems("pos:" + ref, oneMap(ref, { x: round1(clampPct(v)) })); }),
+      numInput("y", "Y position (% of the stage)", d.y, 0, 100, 0.5, function (v) { patchElems("pos:" + ref, oneMap(ref, { y: round1(clampPct(v)) })); }),
+      numInput("rot", "Rotation (degrees)", d.rotation || 0, 0, 359, 1, function (v) { var a = normAngle(v); patchElems("rotate:" + ref, oneMap(ref, { rotation: a || undefined })); })
+    ));
+    rows.push(h("div", { class: "st-row" }, alignButtons(true)));
+    var r3 = [stBtn("lock", d.locked ? "Unlock (allow moving again)" : "Lock (no moving, resizing or rotating)", function () { setLocked([ref], !d.locked); }, { text: d.locked ? "🔓 Unlock" : "🔒 Lock", active: !!d.locked })];
+    if (shape) {
+      r3.push(stBtn("dup", "Duplicate (Ctrl+D)", duplicateSel, { text: "⧉ Duplicate" }));
+      r3.push(stBtn("del", "Delete (Delete)", function () { deleteRefs([ref]); }, { text: "✕", cls: "st-danger" }));
+    } else {
+      r3.push(stBtn("reset", "Reset position: back into the layout", function () { clearTextPosition(refId(ref)); }, { text: "⤺ Reset" }));
+    }
+    if (groupOf(st, ref)) r3.push(stBtn("select-group", "Select its whole group", function () { selectGroupOf(ref); }, { text: "Select group" }));
+    rows.push(h("div", { class: "st-row" }, r3));
+    return rows;
+  }
+
+  function multiTools(st) {
+    var sel = S.sel;
+    var anyShape = sel.some(function (r) { return refKind(r) === "shape"; });
+    var anyGrouped = sel.some(function (r) { return groupOf(st, r); });
+    var allLocked = sel.every(function (r) { var d = elemData(st, r); return d && d.locked; });
+    var r2 = [
+      stBtn("group", "Group (Ctrl+G)", groupSel, { text: "Group" }),
+      anyGrouped ? stBtn("ungroup", "Ungroup (Ctrl+Shift+G)", ungroupSel, { text: "Ungroup" }) : null,
+      stBtn("lock", allLocked ? "Unlock all" : "Lock all", function () { setLocked(sel, !allLocked); }, { text: allLocked ? "🔓 Unlock" : "🔒 Lock", active: allLocked }),
+      anyShape ? stBtn("dup", "Duplicate the shapes (Ctrl+D)", duplicateSel, { text: "⧉" }) : null,
+      anyShape ? stBtn("del", "Delete the shapes (Delete)", function () { deleteRefs(sel); }, { text: "✕", cls: "st-danger" }) : null
+    ];
+    return [
+      h("div", { class: "st-row" }, h("span", { class: "st-label", text: sel.length + " selected · align" }), alignButtons(false)),
+      h("div", { class: "st-row" }, h("span", { class: "st-label", text: "to page" }), alignButtons(true)),
+      h("div", { class: "st-row" }, r2)
+    ];
+  }
+
+  function swatchBtn(role, label, active, fn) {
+    var btn = h("button", { type: "button", class: "deco-swatch" + (!role ? " deco-swatch-auto" : "") + (active ? " active" : ""), "data-role": role || "auto", title: label, "aria-label": label, onclick: fn });
+    if (role) btn.style.setProperty("--sw", COLOR_ROLE_CSS[role].fill);
+    return btn;
+  }
+
+  function oneMap(ref, patch) { var m = {}; m[ref] = patch; return m; }
+
+  /* ---------- Pointer: move, resize, rotate, marquee, pan ---------- */
+
+  var lastPointerDown = 0;
+  document.addEventListener("pointerdown", function () { lastPointerDown = Date.now(); }, true);
+
+  function wireDecoration(node, d) {
+    var ref = "shape:" + d.id;
     node.addEventListener("pointerdown", function (e) {
-      if (e.button !== 0 || e.target.closest(".deco-del")) return;
+      if (e.button !== 0 || e.target.closest(".deco-del") || S.spaceDown) return;
       var handleEl = e.target.closest(".deco-handle");
-      var handle = handleEl ? handleEl.getAttribute("data-handle") : null;
       var label = node.querySelector(".deco-label");
-      if (!handle && label && e.target === label && document.activeElement === label) return; // typing in the label
-      var layerBox = layer.getBoundingClientRect();
-      var start = { x: e.clientX, y: e.clientY };
-      var moved = false;
-      var pos = { x: d.x, y: d.y, w: d.w, h: d.h };
-      var vmin = Math.min(window.innerWidth, window.innerHeight) / 100;
-      var minPx = LL.DECO_MIN * vmin, maxPx = LL.DECO_MAX * vmin;
-      var moves = handle && DECO_HANDLES[handle];
-      var fixed = null;
-      if (handle) {
-        e.preventDefault();
-        var r0 = node.getBoundingClientRect();
-        fixed = { left: r0.left, right: r0.right, top: r0.top, bottom: r0.bottom };
-      }
-      // Keeps the fixed endpoint in place and clamps the span to [minPx, maxPx] on the moving side.
-      function resizeEdge(rawMoving, fixedPt, movingIsStart) {
-        var span = movingIsStart ? fixedPt - rawMoving : rawMoving - fixedPt;
-        span = Math.max(minPx, Math.min(maxPx, span));
-        return movingIsStart ? fixedPt - span : fixedPt + span;
-      }
-      function move(ev) {
-        if (!moved && Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) < 5) return;
-        if (!moved) {
-          moved = true;
-          try { node.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
-          if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-          window.getSelection().removeAllRanges();
-          node.classList.add("moving");
-        }
-        if (handle) {
-          var left = moves.left ? resizeEdge(ev.clientX, fixed.right, true) : fixed.left;
-          var right = moves.right ? resizeEdge(ev.clientX, fixed.left, false) : fixed.right;
-          var top = moves.top ? resizeEdge(ev.clientY, fixed.bottom, true) : fixed.top;
-          var bottom = moves.bottom ? resizeEdge(ev.clientY, fixed.top, false) : fixed.bottom;
-          var cx = (left + right) / 2, cy = (top + bottom) / 2;
-          pos.w = Math.round(((right - left) / vmin) * 2) / 2;
-          pos.h = Math.round(((bottom - top) / vmin) * 2) / 2;
-          pos.x = Math.round(Math.max(0, Math.min(100, ((cx - layerBox.left) / layerBox.width) * 100)) * 10) / 10;
-          pos.y = Math.round(Math.max(0, Math.min(100, ((cy - layerBox.top) / layerBox.height) * 100)) * 10) / 10;
-          node.style.left = pos.x + "%";
-          node.style.top = pos.y + "%";
-          node.style.setProperty("--deco-w", pos.w);
-          node.style.setProperty("--deco-h", pos.h);
-        } else {
-          pos.x = Math.round(Math.max(0, Math.min(100, ((ev.clientX - layerBox.left) / layerBox.width) * 100)) * 10) / 10;
-          pos.y = Math.round(Math.max(0, Math.min(100, ((ev.clientY - layerBox.top) / layerBox.height) * 100)) * 10) / 10;
-          node.style.left = pos.x + "%";
-          node.style.top = pos.y + "%";
-        }
-      }
-      function up() {
-        document.removeEventListener("pointermove", move);
-        document.removeEventListener("pointerup", up);
-        document.removeEventListener("pointercancel", up);
-        if (!moved) return;
-        node.classList.remove("moving");
-        updateDecoration(d.id, handle ? { x: pos.x, y: pos.y, w: pos.w, h: pos.h } : { x: pos.x, y: pos.y });
-      }
-      document.addEventListener("pointermove", move);
-      document.addEventListener("pointerup", up);
-      document.addEventListener("pointercancel", up);
+      if (!handleEl && label && e.target === label && document.activeElement === label) return; // typing in the label
+      if (e.shiftKey) { e.preventDefault(); return toggleSel(ref); }
+      if (S.sel.indexOf(ref) === -1) setSel([ref]);
+      if (handleEl) return startResize(e, node, d, handleEl.getAttribute("data-handle"));
+      startMove(e, ref, liveScene());
+    });
+    // Keyboard focus (Tab) selects the shape, so arrows / Delete / Ctrl+D act on it. Focus that follows a
+    // pointer press is ignored: the pointer handler already chose (and Shift-click must not be undone).
+    node.addEventListener("focus", function () {
+      if (Date.now() - lastPointerDown > 600) { if (S.sel.indexOf(ref) === -1) setSel([ref]); }
     });
   }
 
-  function decoIndex(l, id) {
-    var list = l.stages[S.stage].decorations || [];
-    for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return i;
-    return -1;
+  function wireTextHandle(handle, node, scene, key) {
+    var ref = "text:" + key;
+    handle.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0 || S.spaceDown) return;
+      e.preventDefault();
+      if (elemData(currentStage(), ref)) {
+        if (e.shiftKey) return toggleSel(ref);
+        if (S.sel.indexOf(ref) === -1) setSel([ref]);
+        startMove(e, ref, scene);
+      } else {
+        if (S.sel.length) setSel([]);
+        startMove(e, ref, scene, node); // first drag frees the field from the mechanic's layout
+      }
+    });
   }
 
-  function insertShape(shape) {
+  function snapTargets(st, moving) {
+    var t = { x: [50], y: [50] };
+    freeRefs(st).forEach(function (r) {
+      if (moving.indexOf(r) !== -1) return;
+      var d = elemData(st, r);
+      t.x.push(d.x);
+      t.y.push(d.y);
+    });
+    return t;
+  }
+
+  function nearest(list, v) {
+    var best = null, bd = SNAP;
+    list.forEach(function (t) { var dd = Math.abs(t - v); if (dd <= bd) { bd = dd; best = t; } });
+    return best;
+  }
+
+  function showGuides(scene, x, y, angle) {
+    var box = scene.querySelector(".scene-guides") || scene.appendChild(h("div", { class: "scene-guides", "aria-hidden": "true" }));
+    box.innerHTML = "";
+    if (x != null) { var v = h("i", { class: "guide guide-v" }); v.style.left = x + "%"; box.appendChild(v); }
+    if (y != null) { var hz = h("i", { class: "guide guide-h" }); hz.style.top = y + "%"; box.appendChild(hz); }
+    if (angle) {
+      var a = h("i", { class: "guide guide-angle" });
+      a.style.left = angle.x + "%";
+      a.style.top = angle.y + "%";
+      a.style.transform = "translate(-50%, -50%) rotate(" + angle.deg + "deg)";
+      box.appendChild(a);
+    }
+  }
+
+  function clearGuides(scene) {
+    var box = scene && scene.querySelector(".scene-guides");
+    if (box) box.remove();
+  }
+
+  /* Drag one element, or the whole selection when the grabbed element is part of it. `freeNode`:
+     a text field still in its mechanic's layout — the first move frees it. Snaps the grabbed element's
+     centre to the stage centre lines and to other elements' centres (thin guide lines while snapped). */
+  function startMove(e, grabRef, scene, freeNode) {
+    var st = currentStage();
+    var grab = elemData(st, grabRef);
+    if (grab && grab.locked) return;
+    var g = geo(scene);
+    var refs = freeNode ? [grabRef] : (S.sel.indexOf(grabRef) !== -1 ? S.sel : [grabRef]).filter(function (r) {
+      var d = elemData(st, r);
+      return d && !d.locked;
+    });
+    var starts = {};
+    refs.forEach(function (r) { var d = elemData(st, r); if (d) starts[r] = { x: d.x, y: d.y }; });
+    if (freeNode) {
+      var b0 = boxPct(freeNode, g);
+      starts[grabRef] = { x: round1((b0.l + b0.r) / 2), y: round1((b0.t + b0.b) / 2) };
+    }
+    if (!starts[grabRef]) return;
+    var targets = snapTargets(st, refs);
+    var start = { x: e.clientX, y: e.clientY };
+    var moved = false, last = null;
+    function move(ev) {
+      if (!moved && Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) < 5) return;
+      if (!moved) {
+        moved = true;
+        try { e.target.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+        window.getSelection().removeAllRanges();
+        if (document.activeElement && scene.contains(document.activeElement) && document.activeElement.blur) document.activeElement.blur();
+        scene.classList.add("dragging");
+        var tools = el.stageWrap.querySelector(".sel-tools");
+        if (tools) tools.hidden = true;
+        if (freeNode) freeTextNode(scene, freeNode);
+      }
+      var dx = (ev.clientX - start.x) / g.W * 100, dy = (ev.clientY - start.y) / g.H * 100;
+      var p = starts[grabRef];
+      var sx = nearest(targets.x, p.x + dx), sy = nearest(targets.y, p.y + dy);
+      if (sx !== null) dx = sx - p.x;
+      if (sy !== null) dy = sy - p.y;
+      showGuides(scene, sx, sy);
+      last = {};
+      refs.forEach(function (r) {
+        var pos = { x: round1(clampPct(starts[r].x + dx)), y: round1(clampPct(starts[r].y + dy)) };
+        last[r] = pos;
+        var n = freeNode && r === grabRef ? freeNode : elemNode(r, scene);
+        if (n) { n.style.left = pos.x + "%"; n.style.top = pos.y + "%"; }
+      });
+    }
+    function up() {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", up);
+      clearGuides(scene);
+      scene.classList.remove("dragging");
+      if (!moved || !last) return;
+      if (freeNode) S.sel = [grabRef];
+      patchElems("move:" + refs.join(","), last);
+    }
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
+  }
+
+  /* Resize from one of 8 handles, in the shape's own (rotated) frame: the opposite edge or corner stays
+     put; an edge changes one dimension, a corner both. w / h stay independent. */
+  function startResize(e, node, d, dir) {
+    if (d.locked) return;
+    e.preventDefault();
+    var scene = liveScene();
+    var g = geo(scene);
+    var hd = DECO_HANDLES[dir];
+    var th = (d.rotation || 0) * Math.PI / 180, cos = Math.cos(th), sin = Math.sin(th);
+    var c = { x: g.left + d.x / 100 * g.W, y: g.top + d.y / 100 * g.H };
+    var w = d.w * g.vmin, hh = d.h * g.vmin;
+    var minPx = LL.DECO_MIN * g.vmin, maxPx = LL.DECO_MAX * g.vmin;
+    var fixed = { x: -hd.x * w / 2, y: -hd.y * hh / 2 };
+    var start = { x: e.clientX, y: e.clientY };
+    var moved = false, pos = null;
+    function clampLen(v) { return Math.max(minPx, Math.min(maxPx, v)); }
+    function move(ev) {
+      if (!moved && Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) < 3) return;
+      if (!moved) {
+        moved = true;
+        try { node.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+        scene.classList.add("dragging");
+        var tools = el.stageWrap.querySelector(".sel-tools");
+        if (tools) tools.hidden = true;
+      }
+      var px = ev.clientX - c.x, py = ev.clientY - c.y;
+      var lx = px * cos + py * sin, ly = -px * sin + py * cos; // screen → the shape's frame
+      var nw = w, nh = hh, cx = 0, cy = 0;
+      if (hd.x) { nw = clampLen(hd.x * (lx - fixed.x)); cx = fixed.x + hd.x * nw / 2; }
+      if (hd.y) { nh = clampLen(hd.y * (ly - fixed.y)); cy = fixed.y + hd.y * nh / 2; }
+      var wx = c.x + cx * cos - cy * sin, wy = c.y + cx * sin + cy * cos; // back to screen
+      pos = {
+        x: round1(clampPct((wx - g.left) / g.W * 100)),
+        y: round1(clampPct((wy - g.top) / g.H * 100)),
+        w: Math.max(LL.DECO_MIN, Math.min(LL.DECO_MAX, Math.round(nw / g.vmin * 2) / 2)),
+        h: Math.max(LL.DECO_MIN, Math.min(LL.DECO_MAX, Math.round(nh / g.vmin * 2) / 2))
+      };
+      node.style.left = pos.x + "%";
+      node.style.top = pos.y + "%";
+      node.style.setProperty("--deco-w", pos.w);
+      node.style.setProperty("--deco-h", pos.h);
+    }
+    function up() {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", up);
+      scene.classList.remove("dragging");
+      if (moved && pos) patchElems("resize:" + d.id, oneMap("shape:" + d.id, pos));
+    }
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
+  }
+
+  function snapAngle(a) {
+    var s = Math.round(a / ANGLE_STEP) * ANGLE_STEP;
+    return Math.abs(a - s) <= ANGLE_SNAP ? s % 360 : null;
+  }
+
+  /* Free rotation around the centre; snaps to multiples of 15° (0, 15, 45, 90 …) with a guide line. */
+  function startRotate(e, ref) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var scene = liveScene();
+    var st = currentStage();
+    var d = elemData(st, ref);
+    if (!d || d.locked) return;
+    var g = geo(scene);
+    var c = { x: g.left + d.x / 100 * g.W, y: g.top + d.y / 100 * g.H };
+    var node = elemNode(ref, scene);
+    var rot = d.rotation || 0, moved = false;
+    function move(ev) {
+      if (!moved) {
+        moved = true;
+        scene.classList.add("dragging");
+        var tools = el.stageWrap.querySelector(".sel-tools");
+        if (tools) tools.hidden = true;
+      }
+      var a = normAngle(Math.atan2(ev.clientY - c.y, ev.clientX - c.x) * 180 / Math.PI + 90);
+      var s = snapAngle(a);
+      rot = s !== null ? s : a;
+      if (node) node.style.transform = rotateCss(rot) || "translate(-50%, -50%)";
+      showGuides(scene, null, null, s !== null ? { x: d.x, y: d.y, deg: s } : null);
+    }
+    function up() {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", up);
+      clearGuides(scene);
+      scene.classList.remove("dragging");
+      if (moved) patchElems("rotate:" + ref, oneMap(ref, { rotation: rot || undefined }));
+    }
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
+  }
+
+  /* Empty scene space: drag a marquee to select every shape / freed text it touches; a plain click clears. */
+  function onScenePointerDown(e) {
+    if (!S.editing || e.button !== 0 || S.spaceDown) return;
+    if (e.target.closest(".editable, .deco, button, input, select, textarea, a, label, .rot-handle")) return;
+    var scene = e.currentTarget;
+    if (document.activeElement && document.activeElement.isContentEditable) document.activeElement.blur();
+    e.preventDefault();
+    var g = geo(scene);
+    var start = { x: e.clientX, y: e.clientY };
+    var box = null, rect = null;
+    function move(ev) {
+      if (!box && Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) < 4) return;
+      if (!box) box = scene.appendChild(h("div", { class: "marquee", "aria-hidden": "true" }));
+      rect = { l: Math.min(start.x, ev.clientX), r: Math.max(start.x, ev.clientX), t: Math.min(start.y, ev.clientY), b: Math.max(start.y, ev.clientY) };
+      box.style.left = (rect.l - g.left) / g.W * 100 + "%";
+      box.style.top = (rect.t - g.top) / g.H * 100 + "%";
+      box.style.width = (rect.r - rect.l) / g.W * 100 + "%";
+      box.style.height = (rect.b - rect.t) / g.H * 100 + "%";
+    }
+    function up() {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", up);
+      if (box) box.remove();
+      if (!rect) { if (!e.shiftKey) setSel([]); return; }
+      var hits = freeRefs(currentStage()).filter(function (r) {
+        var n = elemNode(r, scene);
+        if (!n) return false;
+        var b = n.getBoundingClientRect();
+        return b.right >= rect.l && b.left <= rect.r && b.bottom >= rect.t && b.top <= rect.b;
+      });
+      setSel(e.shiftKey ? S.sel.concat(hits.filter(function (r) { return S.sel.indexOf(r) === -1; })) : hits);
+    }
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
+  }
+
+  /* ---------- Commands on the selection ---------- */
+
+  function nudge(dx, dy) {
+    var st = currentStage();
+    var map = {};
+    liveSel(st).forEach(function (r) {
+      var d = elemData(st, r);
+      if (d.locked) return;
+      map[r] = { x: round1(clampPct(d.x + dx)), y: round1(clampPct(d.y + dy)) };
+    });
+    var refs = Object.keys(map);
+    if (!refs.length) return toast("Locked — unlock it to move it.");
+    patchElems("nudge:" + refs.join(","), map); // repeats within 2 s = one undo step, like a drag
+  }
+
+  /* Align the selection's edges / centres to each other, or (toPage) move it as one block to the page. */
+  function alignSel(mode, toPage) {
+    var scene = liveScene(), st = currentStage();
+    if (!scene) return;
+    var g = geo(scene);
+    var refs = liveSel(st);
+    var boxes = {};
+    refs.forEach(function (r) { var n = elemNode(r, scene); if (n) boxes[r] = boxPct(n, g); });
+    var all = unionBox(refs.map(function (r) { return boxes[r]; }));
+    if (!all) return;
+    var tgt = toPage ? { l: 0, r: 100, t: 0, b: 100 } : all;
+    var map = {};
+    refs.forEach(function (r) {
+      var d = elemData(st, r), b = boxes[r];
+      if (!b || d.locked) return;
+      var src = toPage ? all : b;
+      var dx = 0, dy = 0;
+      if (mode === "left") dx = tgt.l - src.l;
+      else if (mode === "right") dx = tgt.r - src.r;
+      else if (mode === "hcenter") dx = (tgt.l + tgt.r) / 2 - (src.l + src.r) / 2;
+      else if (mode === "top") dy = tgt.t - src.t;
+      else if (mode === "bottom") dy = tgt.b - src.b;
+      else if (mode === "vcenter") dy = (tgt.t + tgt.b) / 2 - (src.t + src.b) / 2;
+      map[r] = { x: round1(clampPct(d.x + dx)), y: round1(clampPct(d.y + dy)) };
+    });
+    if (Object.keys(map).length) patchElems(null, map);
+  }
+
+  function setLocked(refs, on) {
+    var map = {};
+    refs.forEach(function (r) { map[r] = { locked: on ? true : undefined }; });
+    patchElems(null, map);
+    toast(on ? "Locked: it can’t be moved, resized or rotated until unlocked." : "Unlocked.");
+  }
+
+  function duplicateSel() {
+    var st = currentStage();
+    var shapes = liveSel(st).filter(function (r) { return refKind(r) === "shape"; });
+    if (!shapes.length) return toast("Duplicate works on shapes (text is part of the lesson content).");
+    var copies = shapes.map(function (r) {
+      var c = LL.clone(elemData(st, r));
+      c.id = LL.uid("shape");
+      delete c.locked;
+      c.x = round1(c.x + 3 > 100 ? c.x - 3 : c.x + 3);
+      c.y = round1(c.y + 3 > 100 ? c.y - 3 : c.y + 3);
+      return c;
+    });
+    S.sel = copies.map(function (c) { return "shape:" + c.id; });
+    mutate(null, function (l) {
+      var s2 = l.stages[S.stage];
+      s2.decorations = (s2.decorations || []).concat(copies);
+    });
+    toast(copies.length === 1 ? "Shape duplicated." : copies.length + " shapes duplicated.");
+  }
+
+  /* Delete shapes (text fields are lesson content: they are never deleted from the canvas). */
+  function deleteRefs(refs) {
+    var shapes = refs.filter(function (r) { return refKind(r) === "shape"; });
+    if (!shapes.length) return toast("Text can’t be deleted here — it is lesson content. ⤺ puts it back in the layout.");
+    S.sel = S.sel.filter(function (r) { return shapes.indexOf(r) === -1; });
+    mutate(null, function (l) {
+      var s2 = l.stages[S.stage];
+      s2.decorations = (s2.decorations || []).filter(function (x) { return x && shapes.indexOf("shape:" + x.id) === -1; });
+      if (!s2.decorations.length) delete s2.decorations;
+      pruneGroups(s2, shapes);
+    });
+    toast((shapes.length === 1 ? "Shape removed." : shapes.length + " shapes removed.") + " Ctrl+Z brings it back.");
+  }
+
+  function groupSel() {
+    var refs = liveSel(currentStage());
+    if (refs.length < 2) return toast("Select 2 or more things first (drag a box around them, or Shift-click).");
+    mutate(null, function (l) {
+      var s2 = l.stages[S.stage];
+      pruneGroups(s2, refs); // an element belongs to one group at most
+      s2.groups = (s2.groups || []).concat({ id: LL.uid("group"), members: refs.slice() });
+    });
+    toast("Grouped. Click one member, then “Select group” to pick them all again.");
+  }
+
+  function ungroupSel() {
+    var st = currentStage();
+    var refs = liveSel(st);
+    if (!refs.some(function (r) { return groupOf(st, r); })) return toast("Nothing selected is in a group.");
+    mutate(null, function (l) {
+      var s2 = l.stages[S.stage];
+      s2.groups = (s2.groups || []).filter(function (g) { return !refs.some(function (r) { return (g.members || []).indexOf(r) !== -1; }); });
+      if (!s2.groups.length) delete s2.groups;
+    });
+    toast("Ungrouped.");
+  }
+
+  /* Layer order for shapes: to front = in front of the content and on top of the other shapes; to back = the reverse. */
+  function layerSel(toFront) {
+    var st = currentStage();
+    var shapes = liveSel(st).filter(function (r) { return refKind(r) === "shape"; });
+    if (!shapes.length) return toast("Only shapes have a layer order — moved text always stays on top.");
+    mutate(null, function (l) {
+      var s2 = l.stages[S.stage];
+      var picked = s2.decorations.filter(function (x) { return shapes.indexOf("shape:" + x.id) !== -1; });
+      var rest = s2.decorations.filter(function (x) { return shapes.indexOf("shape:" + x.id) === -1; });
+      picked.forEach(function (x) { if (toFront) x.z = "front"; else delete x.z; });
+      s2.decorations = toFront ? rest.concat(picked) : picked.concat(rest);
+    });
+  }
+
+  function clearTextPosition(key) {
+    var ref = "text:" + key;
+    S.sel = S.sel.filter(function (r) { return r !== ref; });
+    mutate(null, function (l) { // always its own undo step, even right after a drag of the same field
+      var st = l.stages[S.stage];
+      if (!st.textStyle || !st.textStyle[key]) return;
+      var entry = Object.assign({}, st.textStyle[key]);
+      ["x", "y", "rotation", "locked"].forEach(function (k) { delete entry[k]; });
+      if (Object.keys(entry).length) st.textStyle[key] = entry;
+      else delete st.textStyle[key];
+      if (!Object.keys(st.textStyle).length) delete st.textStyle;
+      pruneGroups(st, [ref]);
+    });
+  }
+
+  function viewCenterPct() {
+    var scene = liveScene();
+    var wrap = el.stageWrap.getBoundingClientRect();
+    var tbH = el.toolbar ? el.toolbar.offsetHeight : 0;
+    var g = geo(scene);
+    return {
+      x: round1(Math.max(5, Math.min(95, (wrap.left + wrap.width / 2 - g.left) / g.W * 100))),
+      y: round1(Math.max(5, Math.min(95, (wrap.top + tbH + (wrap.height - tbH) / 2 - g.top) / g.H * 100)))
+    };
+  }
+
+  function insertShape(shape, preset) {
     var st = currentStage();
     if (!st) return;
     var n = (st.decorations || []).length;
-    var d = { id: LL.uid("shape"), shape: shape, x: 80 - (n % 3) * 9, y: 26 + (n % 3) * 12, w: shape === "rectangle" ? 20 : 14, h: shape === "rectangle" ? 13 : 14 };
+    var d = Object.assign({ id: LL.uid("shape"), shape: shape, x: 80 - (n % 3) * 9, y: 26 + (n % 3) * 12 },
+      SHAPE_DEFAULTS[shape] || { w: 14, h: 14 }, preset || {});
     S.pop = null;
+    S.sel = ["shape:" + d.id];
     mutate(null, function (l) {
       var s2 = l.stages[S.stage];
       s2.decorations = (s2.decorations || []).concat(d);
     });
     renderToolbar();
-    focusDecoration(d.id);
-    toast("Shape added. Drag to move, drag any edge or corner to resize. Its colour follows this stage.");
+    if (!preset) toast("Shape added. Drag to move, drag any edge or corner to resize, ↻ to rotate. Right-click for more.");
+    return d;
   }
 
-  function updateDecoration(id, patch) {
-    mutate("deco:" + id + ":" + Object.keys(patch).join(","), function (l) {
-      var i = decoIndex(l, id);
-      if (i === -1) return;
-      var d = l.stages[S.stage].decorations[i];
-      Object.keys(patch).forEach(function (k) {
-        if (patch[k] === undefined) delete d[k];
-        else d[k] = patch[k];
-      });
-    });
-    focusDecoration(id);
+  /* One click: a rectangle in the curated highlight colour, in front of the stage content, mid-view. */
+  function insertHighlighter() {
+    var c = viewCenterPct();
+    insertShape("rectangle", { x: c.x, y: c.y, w: 30, h: 8, color: "highlight", z: "front" });
+    toast("Highlighter added. Drag it behind a moved phrase (moved text always stays on top of shapes).");
   }
 
-  function removeDecoration(id) {
-    mutate(null, function (l) {
-      var s2 = l.stages[S.stage];
-      s2.decorations = (s2.decorations || []).filter(function (x) { return x && x.id !== id; });
-      if (!s2.decorations.length) delete s2.decorations;
-    });
-    toast("Shape removed. Ctrl+Z brings it back.");
+  /* ---------- Context menu ---------- */
+
+  function refFromTarget(t) {
+    var st = currentStage();
+    var deco = t.closest(".deco");
+    if (deco) return "shape:" + deco.getAttribute("data-id");
+    var hd = t.closest(".drag-handle, .drag-reset");
+    var key = hd ? hd.getAttribute("data-key") : null;
+    if (!key) {
+      var txt = t.closest(".scene-freepos > [data-ll-key]");
+      key = txt ? txt.getAttribute("data-ll-key") : null;
+    }
+    return key && elemData(st, "text:" + key) ? "text:" + key : null;
   }
 
-  function focusDecoration(id) {
-    var node = el.stageWrap && el.stageWrap.querySelector('.scene:not(.leave-fwd):not(.leave-back) .deco[data-id="' + id + '"]');
-    if (node) node.focus({ preventScroll: true });
+  function onSceneContextMenu(e) {
+    if (!S.editing) return;
+    var ref = refFromTarget(e.target);
+    if (!ref) return;
+    e.preventDefault();
+    if (S.sel.indexOf(ref) === -1) setSel([ref]);
+    openCtxMenu(e.clientX, e.clientY);
+  }
+
+  function closeCtxMenu() {
+    var m = document.querySelector(".ctx-menu");
+    if (m) { m.remove(); return true; }
+    return false;
+  }
+
+  function openCtxMenu(x, y) {
+    closeCtxMenu();
+    var st = currentStage();
+    var sel = liveSel(st);
+    if (!sel.length) return;
+    var anyShape = sel.some(function (r) { return refKind(r) === "shape"; });
+    var allLocked = sel.every(function (r) { return elemData(st, r).locked; });
+    var single = sel.length === 1 ? sel[0] : null;
+    var items = [
+      anyShape && ["dup", "Duplicate", "Ctrl+D", duplicateSel],
+      anyShape && ["del", "Delete", "Delete", function () { deleteRefs(sel); }],
+      anyShape && ["to-front", "Bring to front", "", function () { layerSel(true); }],
+      anyShape && ["to-back", "Send to back", "", function () { layerSel(false); }],
+      ["lock", allLocked ? "Unlock" : "Lock", "", function () { setLocked(sel, !allLocked); }],
+      sel.length > 1 && ["group", "Group", "Ctrl+G", groupSel],
+      sel.some(function (r) { return groupOf(st, r); }) && ["ungroup", "Ungroup", "Ctrl+Shift+G", ungroupSel],
+      single && groupOf(st, single) && ["select-group", "Select group", "", function () { selectGroupOf(single); }],
+      ["center", "Centre on page", "", function () { alignSel("hcenter", true); alignSel("vcenter", true); }],
+      single && refKind(single) === "text" && ["reset", "Reset position", "", function () { clearTextPosition(refId(single)); }]
+    ].filter(Boolean);
+    var menu = h("div", { class: "ctx-menu", role: "menu" }, items.map(function (it) {
+      return h("button", { type: "button", role: "menuitem", class: "ctx-item" + (it[0] === "del" ? " ctx-danger" : ""), "data-act": it[0],
+        onclick: function () { closeCtxMenu(); it[3](); } }, h("span", { text: it[1] }), it[2] ? h("kbd", { text: it[2] }) : null);
+    }));
+    document.body.appendChild(menu);
+    menu.style.left = Math.min(x, window.innerWidth - menu.offsetWidth - 6) + "px";
+    menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 6) + "px";
+  }
+
+  document.addEventListener("pointerdown", function (e) {
+    if (!e.target.closest(".ctx-menu")) closeCtxMenu();
+  }, true);
+
+  /* ---------- Zoom / pan (edit mode only; a view transform — stored x / y / w / h never change) ---------- */
+
+  function resetZoom() {
+    S.zoom = 1;
+    S.panX = 0;
+    S.panY = 0;
+  }
+
+  function clampPan(sc) {
+    var W = sc.offsetWidth, H = sc.offsetHeight;
+    S.panX = Math.min(0, Math.max(W - S.zoom * W, S.panX));
+    S.panY = Math.min(0, Math.max(H - S.zoom * H, S.panY));
+  }
+
+  // `scale` / `translate` (not `transform`), so the scene's enter animation can't override it.
+  function applyZoom() {
+    var sc = liveScene();
+    if (sc) {
+      var on = S.editing && S.zoom !== 1;
+      sc.style.transformOrigin = on ? "0 0" : "";
+      sc.style.scale = on ? String(S.zoom) : "";
+      sc.style.translate = on ? S.panX + "px " + S.panY + "px" : "";
+      sc.classList.toggle("zoomed", on);
+    }
+    var lab = el.toolbar && el.toolbar.querySelector(".tb-zoom-val");
+    if (lab) lab.textContent = Math.round(S.zoom * 100) + "%";
+  }
+
+  /* Zoom keeping the screen point (px, py) still (default: the middle of the scene). */
+  function setZoom(z, px, py) {
+    var sc = liveScene();
+    if (!sc || !S.editing) return;
+    z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(z * 100) / 100));
+    var wrap = el.stageWrap.getBoundingClientRect();
+    var ox = wrap.left + sc.offsetLeft, oy = wrap.top + sc.offsetTop;
+    if (px == null) { px = ox + sc.offsetWidth / 2; py = oy + sc.offsetHeight / 2; }
+    var lx = (px - ox - S.panX) / S.zoom, ly = (py - oy - S.panY) / S.zoom;
+    S.zoom = z;
+    S.panX = px - ox - z * lx;
+    S.panY = py - oy - z * ly;
+    clampPan(sc);
+    applyZoom();
+    paintSelection();
+  }
+
+  function panBy(dx, dy) {
+    var sc = liveScene();
+    if (!sc || S.zoom === 1) return;
+    S.panX += dx;
+    S.panY += dy;
+    clampPan(sc);
+    applyZoom();
+    paintSelection();
+  }
+
+  function wireZoomPan(wrap) {
+    wrap.addEventListener("wheel", function (e) {
+      if (!S.editing || !liveScene()) return;
+      if (e.target.closest(".edit-pop, .edit-toolbar, .sel-tools")) return;
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        setZoom(S.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1), e.clientX, e.clientY);
+      } else if (S.zoom !== 1) {
+        e.preventDefault();
+        panBy(-e.deltaX, -e.deltaY);
+      }
+    }, { passive: false });
+    // Space + drag pans (capture phase: wins over shapes and handles while Space is held).
+    wrap.addEventListener("pointerdown", function (e) {
+      if (!S.editing || !S.spaceDown || S.zoom === 1 || !e.target.closest(".scene")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      S.spacePanned = true;
+      var last = { x: e.clientX, y: e.clientY };
+      function move(ev) { panBy(ev.clientX - last.x, ev.clientY - last.y); last = { x: ev.clientX, y: ev.clientY }; }
+      function up() {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+      }
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
+    }, true);
   }
 
   function audioIcon() {
@@ -851,14 +1721,15 @@
     return key;
   }
 
-  /* Apply any teacher-set alignment / size / colour override for this field. Never font; position
-     (x/y) is handled separately, after render, by applyFreePositions (it moves the node itself). */
+  /* Apply any teacher-set alignment / colour override for this field, and a legacy `size`. Never font.
+     `scale` (the Text size control) needs the node in the document, so applyTextScales does it after
+     render; position (x / y) and rotation are applied by applyFreePositions (it moves the node itself). */
   function applyTextStyle(node, path) {
     if (path[0] !== "stages") return;
     var st = S.lesson.stages[path[1]];
     var ts = st && st.textStyle && st.textStyle[textStyleKey(path)];
     node.style.textAlign = ts && ts.align ? ts.align : "";
-    node.style.fontSize = ts && ts.size ? ts.size + "em" : "";
+    node.style.fontSize = ts && ts.size && !ts.scale ? ts.size + "em" : ""; // legacy: a multiple of the parent's size
     node.style.color = ts && ts.color && COLOR_ROLE_CSS[ts.color] ? COLOR_ROLE_CSS[ts.color].fill : "";
   }
 
@@ -902,127 +1773,6 @@
     });
   }
 
-  /* ---------- Free position (drag) for any bound text field ----------
-   * Opt-in, per field, stored as x/y (% of the scene) in the same stage.textStyle entry as
-   * align/size/color. Unset = the mechanic's own layout, exactly as before. Once set, the field is
-   * reparented into .scene-freepos and positioned like a shape (see applyFreePositions).
-   */
-
-  /* After the mechanic has rendered, move any field with a stored position into the freeform layer. */
-  function applyFreePositions(scene, st) {
-    var ts = st && st.textStyle;
-    if (!ts) return;
-    var overlay = null;
-    Object.keys(ts).forEach(function (key) {
-      var v = ts[key];
-      if (v.x === undefined || v.y === undefined) return;
-      var node = scene.querySelector('[data-ll-key="' + key + '"]');
-      if (!node) return; // the field isn't on screen this render (e.g. an optional field left empty)
-      if (!overlay) overlay = scene.querySelector(".scene-freepos") || scene.appendChild(h("div", { class: "scene-freepos" }));
-      node.style.left = v.x + "%";
-      node.style.top = v.y + "%";
-      overlay.appendChild(node);
-    });
-  }
-
-  /* Edit mode only: a small drag handle over every bound text field (shape labels excluded — they
-     already move with their shape), plus a reset button on a field that already has a free position. */
-  function attachDragHandles(scene, content) {
-    var old = scene.querySelector(".scene-drag-handles");
-    if (old) old.remove();
-    var overlay = h("div", { class: "scene-drag-handles" });
-    scene.appendChild(overlay);
-    var sceneBox = scene.getBoundingClientRect();
-    var nodes = scene.querySelectorAll(".editable[data-ll-key]");
-    Array.prototype.forEach.call(nodes, function (node) {
-      if (node.closest(".deco")) return;
-      var key = node.getAttribute("data-ll-key");
-      var r = node.getBoundingClientRect();
-      var cx = r.left + r.width / 2 - sceneBox.left;
-      var cy = r.top - sceneBox.top;
-      var handle = h("button", { type: "button", class: "drag-handle", title: "Drag to move this text", "aria-label": "Drag to move this text" });
-      handle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-        '<path d="M12 2v20 M2 12h20 M6 6l-4 6 4 6 M18 6l4 6-4 6 M6 18l6 4 6-4 M6 6l6-4 6 4"/></svg>';
-      handle.style.left = cx + "px";
-      handle.style.top = cy + "px";
-      overlay.appendChild(handle);
-      wireTextDrag(handle, node, scene, key);
-      if (node.parentElement && node.parentElement.classList.contains("scene-freepos")) {
-        var reset = h("button", {
-          type: "button", class: "drag-reset", title: "Reset position", "aria-label": "Reset position",
-          onclick: function () { clearTextPosition(key); }
-        }, "⤺");
-        reset.style.left = cx + "px";
-        reset.style.top = cy + "px";
-        overlay.appendChild(reset);
-      }
-    });
-  }
-
-  function wireTextDrag(handle, node, scene, key) {
-    handle.addEventListener("pointerdown", function (e) {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      var sceneBox = scene.getBoundingClientRect();
-      var start = { x: e.clientX, y: e.clientY };
-      var moved = false;
-      var pos = { x: 0, y: 0 };
-      function toPercent(ev) {
-        return {
-          x: Math.round(Math.max(0, Math.min(100, ((ev.clientX - sceneBox.left) / sceneBox.width) * 100)) * 10) / 10,
-          y: Math.round(Math.max(0, Math.min(100, ((ev.clientY - sceneBox.top) / sceneBox.height) * 100)) * 10) / 10
-        };
-      }
-      function move(ev) {
-        if (!moved && Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) < 5) return;
-        if (!moved) {
-          moved = true;
-          try { handle.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
-          if (!(node.parentElement && node.parentElement.classList.contains("scene-freepos"))) {
-            var overlay = scene.querySelector(".scene-freepos") || scene.appendChild(h("div", { class: "scene-freepos" }));
-            overlay.appendChild(node);
-          }
-        }
-        pos = toPercent(ev);
-        node.style.left = pos.x + "%";
-        node.style.top = pos.y + "%";
-        handle.style.left = (ev.clientX - sceneBox.left) + "px";
-        handle.style.top = (ev.clientY - sceneBox.top) + "px";
-      }
-      function up() {
-        document.removeEventListener("pointermove", move);
-        document.removeEventListener("pointerup", up);
-        document.removeEventListener("pointercancel", up);
-        if (!moved) return;
-        setTextPosition(key, pos.x, pos.y);
-      }
-      document.addEventListener("pointermove", move);
-      document.addEventListener("pointerup", up);
-      document.addEventListener("pointercancel", up);
-    });
-  }
-
-  function setTextPosition(key, x, y) {
-    mutate("textpos:" + key, function (l) {
-      var st = l.stages[S.stage];
-      var ts = st.textStyle || (st.textStyle = {});
-      ts[key] = Object.assign({}, ts[key], { x: x, y: y });
-    });
-  }
-
-  function clearTextPosition(key) {
-    mutate(null, function (l) { // always its own undo step, even right after a drag of the same field
-      var st = l.stages[S.stage];
-      if (!st.textStyle || !st.textStyle[key]) return;
-      var entry = Object.assign({}, st.textStyle[key]);
-      delete entry.x;
-      delete entry.y;
-      if (Object.keys(entry).length) st.textStyle[key] = entry;
-      else delete st.textStyle[key];
-      if (!Object.keys(st.textStyle).length) delete st.textStyle;
-    });
-  }
-
   /* ---------- Navigation ---------- */
 
   function goTo(i) {
@@ -1033,6 +1783,8 @@
     var dir = i > S.stage ? 1 : -1;
     pauseTimer();
     S.stage = i;
+    S.sel = [];
+    resetZoom();
     syncHash();
     renderRail();
     renderScene(dir);
@@ -1164,6 +1916,10 @@
     S.lastKey = null;
     S.pop = null;
     S.lastEditable = null;
+    S.sel = [];
+    S.spaceDown = false;
+    resetZoom();
+    closeCtxMenu();
     renderAll(0);
     if (on && !quiet) toast("Edit mode — click any text to change it. Tools are the icons at the top. Ctrl+Z undoes.");
   }
@@ -1261,6 +2017,7 @@
     opts = opts || {};
     var now = Date.now();
     if (key === null || key !== S.lastKey || now - S.lastTime > 2000) pushUndo();
+    S.redo = []; // a new edit ends the redo history
     S.lastKey = key;
     S.lastTime = now;
     fn(S.lesson);
@@ -1296,16 +2053,35 @@
     }
   };
 
-  function undo() {
-    if (!S.undo.length) return toast("Nothing to undo.");
-    var snap = JSON.parse(S.undo.pop());
+  function snapshot() {
+    return JSON.stringify({ lesson: S.lesson, stage: S.stage });
+  }
+
+  function restore(json) {
+    var snap = JSON.parse(json);
+    var stageBefore = S.stage;
     S.lesson = snap.lesson;
     S.stage = Math.max(0, Math.min(snap.stage, stages().length - 1));
+    if (S.stage !== stageBefore) { S.sel = []; resetZoom(); }
     S.lastKey = null;
     commit();
     revalidate();
     renderAll(0);
-    toast("Undone.");
+  }
+
+  /* Undo / redo walk one history: undo moves the current state onto the redo stack, redo moves it back. */
+  function undo() {
+    if (!S.undo.length) return toast("Nothing to undo.");
+    S.redo.push(snapshot());
+    restore(S.undo.pop());
+    toast("Undone. Ctrl+Y redoes.");
+  }
+
+  function redo() {
+    if (!S.redo.length) return toast("Nothing to redo.");
+    S.undo.push(snapshot());
+    restore(S.redo.pop());
+    toast("Redone.");
   }
 
   function newStage() {
@@ -1422,6 +2198,13 @@
     add: '<path d="M4 6h10v12H4z M18 9v6 M15 12h6"/>',
     trash: '<path d="M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v6 M14 11v6"/>',
     undo: '<path d="M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3"/>',
+    redo: '<path d="M15 14l5-5-5-5 M20 9H10a6 6 0 0 0 0 12h3"/>',
+    highlighter: '<path d="M4 21h16"/><path d="M8 17l-1.5-1.5 9-9 3 3-9 9z"/><path d="M6.5 15.5L4 18h4"/>',
+    layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+    zoomin: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M20 20l-4.8-4.8 M10.5 7.5v6 M7.5 10.5h6"/>',
+    zoomout: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M20 20l-4.8-4.8 M7.5 10.5h6"/>',
+    arrow: '<path d="M3 12h16 M14 6l6 6-6 6"/>',
+    line: '<path d="M3 12h18"/>',
     bullets: '<circle cx="5" cy="7" r="1.6" fill="currentColor"/><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="5" cy="17" r="1.6" fill="currentColor"/><path d="M10 7h10 M10 12h10 M10 17h10"/>',
     numbers: '<path d="M4 5h2v5 M4 10h3 M4 14.5a1.5 1.5 0 1 1 2.6 1L4 19h3.2 M10 7h10 M10 12h10 M10 17h10"/>',
     align: '<path d="M4 6h16 M4 11h10 M4 16h16 M4 21h10"/>',
@@ -1501,7 +2284,8 @@
     el.toolbar.appendChild(h("div", { class: "tb-group" },
       tbBtn("add", "Add a stage after this one (A)", addStage),
       tbBtn("trash", "Delete this stage (Delete) — asks first", askDeleteStage, { pop: "delete", cls: "tb-danger" }),
-      tbBtn("undo", "Undo (Ctrl+Z)", undo)
+      tbBtn("undo", "Undo (Ctrl+Z)", undo),
+      tbBtn("redo", "Redo (Ctrl+Y)", redo)
     ));
     el.toolbar.appendChild(h("div", { class: "tb-group" },
       tbBtn("bullets", "Bulleted list: click in a text, then here (Ctrl+Shift+8)", function () { listFormat("bullet"); }, { keepFocus: true }),
@@ -1511,7 +2295,14 @@
       tbBtn("textcolor", "Text colour: click in a text, then here", function () { togglePop("textcolor"); }, { pop: "textcolor", keepFocus: true })
     ));
     el.toolbar.appendChild(h("div", { class: "tb-group" },
-      tbBtn("shape", "Insert a shape", function () { togglePop("shape"); }, { pop: "shape" })
+      tbBtn("shape", "Insert a shape", function () { togglePop("shape"); }, { pop: "shape" }),
+      tbBtn("highlighter", "Insert a highlighter (yellow bar, in front)", insertHighlighter),
+      tbBtn("layers", "Layers: every shape and moved text on this stage", function () { togglePop("layers"); }, { pop: "layers" })
+    ));
+    el.toolbar.appendChild(h("div", { class: "tb-group tb-zoom" },
+      tbBtn("zoomout", "Zoom out (Ctrl + -)", function () { setZoom(S.zoom / 1.25); }),
+      h("button", { type: "button", class: "tb-zoom-val", title: "Zoom: click for 100% (Ctrl+0)", onclick: function () { setZoom(1); }, text: Math.round(S.zoom * 100) + "%" }),
+      tbBtn("zoomin", "Zoom in (Ctrl + +) · Space + drag or scroll to pan", function () { setZoom(S.zoom * 1.25); })
     ));
     el.toolbar.appendChild(h("div", { class: "tb-group" },
       tbBtn("stage", "This stage: title, minutes, audio, worksheet, mechanic", function () { togglePop("stage"); }, { pop: "stage" }),
@@ -1580,7 +2371,7 @@
             return h("button", { type: "button", class: "shape-pick", title: sh, "aria-label": "Insert " + sh, onclick: function () { insertShape(sh); } },
               icon(sh), h("span", { text: sh.charAt(0).toUpperCase() + sh.slice(1) }));
           })),
-          h("p", { class: "field-help", text: "Colour matches this stage automatically. Drag to move, drag any edge or corner to resize, ✕ removes." })
+          h("p", { class: "field-help", text: "Colour matches this stage automatically. Click a shape for its tools (colour, position, rotation, lock…); right-click for more." })
         );
       }
     },
@@ -1603,20 +2394,63 @@
     },
     textsize: {
       title: "Text size",
+      /* 100% = the field's own untouched rendered size, measured now from its computed style (not a
+         nominal constant). The slider is logarithmic, so it scales symmetrically: the same distance
+         halves or doubles. Back at 100% the override is removed, so the field is exactly untouched. */
       build: function () {
         var cur = currentStyleEntry();
-        var size = cur && cur.value.size ? cur.value.size : 1;
-        var slider = h("input", { type: "range", min: String(LL.TEXT_SIZE_MIN), max: String(LL.TEXT_SIZE_MAX), step: "0.05", value: String(size) });
-        var val = h("span", { class: "size-val", text: Math.round(size * 100) + "%" });
-        slider.addEventListener("input", function () { val.textContent = Math.round(slider.value * 100) + "%"; });
+        var scene = liveScene();
+        var node = cur && scene ? scene.querySelector('[data-ll-key="' + CSS.escape(cur.key) + '"]') : null;
+        var natural = node ? naturalFontPx(node) : 0;
+        var k = node && natural ? parseFloat(window.getComputedStyle(node).fontSize) / natural : 1;
+        var lim = Math.round(Math.log(LL.TEXT_SCALE_MAX) / Math.LN2 * 100) / 100; // 1.32: 2^±1.32 ≈ 250% / 40%
+        function toK(v) {
+          var kk = Math.round(Math.pow(2, v) * 20) / 20; // whole 5% steps (50%, 150% … land exactly)
+          return Math.max(LL.TEXT_SCALE_MIN, Math.min(LL.TEXT_SCALE_MAX, kk));
+        }
+        var slider = h("input", { type: "range", class: "size-slider", min: String(-lim), max: String(lim), step: "0.01", value: String(Math.log(k) / Math.LN2), disabled: node ? null : "disabled", "aria-label": "Text size" });
+        var val = h("span", { class: "size-val", text: Math.round(k * 100) + "%" });
+        slider.addEventListener("input", function () {
+          var kk = toK(parseFloat(slider.value));
+          val.textContent = Math.round(kk * 100) + "%";
+          if (node) node.style.fontSize = natural * kk + "px"; // live preview; saved on release
+        });
         slider.addEventListener("change", function () {
-          var v = parseFloat(slider.value);
-          setTextStyle({ size: Math.abs(v - 1) < 0.01 ? undefined : v });
+          var kk = toK(parseFloat(slider.value));
+          setTextStyle({ scale: kk === 1 ? undefined : kk, size: undefined });
         });
         return h("div", { class: "pop-body" },
           h("div", { class: "size-row" }, slider, val),
-          h("button", { type: "button", class: "btn", onclick: function () { setTextStyle({ size: undefined }); } }, "Reset to auto"),
-          h("p", { class: "field-help", text: cur ? "Applies to the text you last clicked on the stage." : "Click a text on the stage first, then choose here." })
+          h("button", { type: "button", class: "btn", "data-act": "size-reset", onclick: function () { setTextStyle({ scale: undefined, size: undefined }); } }, "Reset to auto"),
+          h("p", { class: "field-help", text: cur ? "100% = how this text looks untouched. Applies to the text you last clicked on the stage." : "Click a text on the stage first, then choose here." })
+        );
+      }
+    },
+    layers: {
+      title: "Layers",
+      build: function () {
+        var st = currentStage();
+        var scene = liveScene();
+        var refs = freeRefs(st).slice().reverse(); // top of the pile first
+        if (!refs.length) return h("div", { class: "pop-body" }, h("p", { class: "field-help", text: "No shapes or moved text on this stage yet. Insert a shape, or drag a text by its handle." }));
+        return h("div", { class: "pop-body" },
+          h("div", { class: "layer-list" }, refs.map(function (r) {
+            var d = elemData(st, r);
+            var shape = refKind(r) === "shape";
+            var n = elemNode(r, scene);
+            var name = shape ? (d.label ? "“" + d.label + "”" : d.shape.charAt(0).toUpperCase() + d.shape.slice(1)) : (n && n.textContent.trim() ? "“" + n.textContent.trim().slice(0, 32) + (n.textContent.trim().length > 32 ? "…" : "") + "”" : refId(r));
+            return h("button", { type: "button", class: "layer-row" + (S.sel.indexOf(r) !== -1 ? " active" : ""), "data-ref": r,
+              onclick: function (e) {
+                if (e.shiftKey) toggleSel(r); else setSel([r]);
+                var node = elemNode(r);
+                if (node && shape) node.focus({ preventScroll: true });
+              } },
+              h("span", { class: "layer-kind", text: shape ? (d.z === "front" ? "Shape · front" : "Shape · back") : "Text" }),
+              h("span", { class: "layer-name", text: name }),
+              d.locked ? h("span", { class: "layer-tag", text: "🔒" }) : null,
+              groupOf(st, r) ? h("span", { class: "layer-tag", text: "group" }) : null);
+          })),
+          h("p", { class: "field-help", text: "Top of the list paints on top. Moved text always stays above shapes. Shift-click adds to the selection." })
         );
       }
     },
@@ -2103,9 +2937,17 @@
     ["Edit mode", [
       ["E", "Edit mode on / off"],
       ["Ctrl+Z  or  U", "Undo"],
+      ["Ctrl+Y  (Ctrl+Shift+Z)", "Redo (after an undo)"],
       ["A", "Add a stage after this one"],
       ["Alt+↑ / Alt+↓", "Move this stage"],
-      ["Delete", "Delete this stage (asks first) · a selected shape: remove it"],
+      ["Delete", "Delete this stage (asks first) · with shapes selected: remove them"],
+      ["Arrows / Shift+Arrows", "Nudge the selected shapes / moved text (0.5% / 2%)"],
+      ["Ctrl+D", "Duplicate the selected shapes"],
+      ["Ctrl+G / Ctrl+Shift+G", "Group / ungroup the selection"],
+      ["Shift+click · drag on empty space", "Add to the selection · select with a box"],
+      ["Right-click", "More actions on a shape or moved text"],
+      ["Ctrl + + / Ctrl + - / Ctrl+0", "Zoom in / out / 100% (edit view only)"],
+      ["Space + drag  ·  scroll", "Pan while zoomed (a Space tap still starts the timer)"],
       ["Ctrl+Shift+8 / 7", "Bulleted / numbered list on the current line(s)"],
       ["Esc", "Stop typing / close the open tool / leave edit mode"]
     ]],
@@ -2196,11 +3038,27 @@
       undo();
       return;
     }
+    // Redo: Ctrl+Y (and Ctrl+Shift+Z), same history.
+    if (inLesson && S.editing && (e.ctrlKey || e.metaKey) && ((!e.shiftKey && k.toLowerCase() === "y") || (e.shiftKey && k.toLowerCase() === "z"))) {
+      e.preventDefault();
+      redo();
+      return;
+    }
+    // Canvas shortcuts (edit mode, not while typing): zoom, duplicate, group / ungroup.
+    if (inLesson && S.editing && !typing && (e.ctrlKey || e.metaKey) && !e.altKey) {
+      if (k === "=" || k === "+" || e.code === "NumpadAdd") { e.preventDefault(); return setZoom(S.zoom * 1.25); }
+      if (k === "-" || k === "_" || e.code === "NumpadSubtract") { e.preventDefault(); return setZoom(S.zoom / 1.25); }
+      if (k === "0") { e.preventDefault(); return setZoom(1); }
+      if (!e.shiftKey && k.toLowerCase() === "d") { e.preventDefault(); return duplicateSel(); }
+      if (k.toLowerCase() === "g") { e.preventDefault(); return e.shiftKey ? ungroupSel() : groupSel(); }
+    }
 
     if (k === "Escape") {
+      if (closeCtxMenu()) return;
       if (typing) return e.target.blur();
       if (S.help) return setHelp(false);
       if (inLesson && S.editing && closePop()) return;
+      if (inLesson && S.editing && S.sel.length) return setSel([]);
       if (inLesson && S.editing) return setEditing(false);
       if (inLesson && S.teacher) return setTeacher(false);
       if (inLesson) return goLevel();
@@ -2214,6 +3072,18 @@
     if (inLesson && S.editing && e.altKey && (k === "ArrowUp" || k === "ArrowDown")) {
       e.preventDefault();
       return moveStage(k === "ArrowUp" ? -1 : 1);
+    }
+    // Arrows nudge the selection (Shift: bigger step) instead of changing stage.
+    if (inLesson && S.editing && S.sel.length && !e.ctrlKey && !e.metaKey && !e.altKey && /^Arrow/.test(k)) {
+      e.preventDefault();
+      var stepPct = e.shiftKey ? NUDGE_BIG : NUDGE;
+      return nudge(k === "ArrowLeft" ? -stepPct : k === "ArrowRight" ? stepPct : 0, k === "ArrowUp" ? -stepPct : k === "ArrowDown" ? stepPct : 0);
+    }
+    // Space in edit mode: held = pan the zoomed scene with a drag; a tap still starts / pauses the timer.
+    if (inLesson && S.editing && k === " " && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      if (!e.repeat) { S.spaceDown = true; S.spacePanned = false; el.stageWrap.classList.add("space-pan"); }
+      return;
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
 
@@ -2278,11 +3148,24 @@
       if (k === "u" || k === "U") return undo();
       if (k === "a" || k === "A") return addStage();
       if (k === "Delete") {
+        if (S.sel.length) return deleteRefs(S.sel);
         var focused = document.activeElement;
-        if (focused && focused.classList && focused.classList.contains("deco")) return removeDecoration(focused.getAttribute("data-id"));
+        if (focused && focused.classList && focused.classList.contains("deco")) return deleteRefs(["shape:" + focused.getAttribute("data-id")]);
         return askDeleteStage();
       }
     }
+  });
+
+  window.addEventListener("blur", function () { // Space released outside the window: never leave pan mode stuck
+    S.spaceDown = false;
+    if (el.stageWrap) el.stageWrap.classList.remove("space-pan");
+  });
+
+  document.addEventListener("keyup", function (e) {
+    if (e.key !== " " || !S.spaceDown) return;
+    S.spaceDown = false;
+    if (el.stageWrap) el.stageWrap.classList.remove("space-pan");
+    if (!S.spacePanned && S.route.view === "lesson" && S.lesson) toggleTimer();
   });
 
   /* ================= Boot ================= */

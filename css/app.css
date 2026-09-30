@@ -332,7 +332,7 @@ kbd {
 
 .scene-head {
   position: relative;
-  z-index: 2;
+  z-index: 3; /* paint order: see "Paint order on a scene" */
   align-self: flex-start;
   display: flex;
   flex-wrap: wrap;
@@ -377,7 +377,7 @@ kbd {
 
 .scene-content {
   position: relative;
-  z-index: 1;
+  z-index: 2; /* paint order: see "Paint order on a scene" */
   flex: 1;
   min-height: 0;
   display: flex;
@@ -638,29 +638,41 @@ kbd {
 .editable:empty::before { content: attr(data-placeholder); opacity: 0.5; font-style: italic; }
 .editing .scene-bg { animation-play-state: paused; }
 
+/* ---------- Paint order on a scene: a hard rule, never DOM order ----------
+   back shapes < stage content < stage title < front shapes < freed (dragged) text.
+   Freed text is always above every shape, so a highlighter can sit behind a dragged phrase.
+   Edit mode raises all shapes above the content (so they can be grabbed) and keeps freed text on top. */
+.scene { isolation: isolate; }
+.scene-decor { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+/* .scene-content: 2 · .scene-head: 3 (set on those rules above) */
+.scene-decor-front { z-index: 4; }
+.scene-freepos { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+.editing .scene-decor { z-index: 4; }
+.editing .scene-decor-front { z-index: 5; }
+.editing .scene-freepos { z-index: 6; }
+
 /* A text field the teacher has dragged: freed from the mechanic's normal layout, positioned like a shape. */
-.scene-freepos { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .scene-freepos > * { position: absolute; transform: translate(-50%, -50%); max-width: 80%; pointer-events: auto; margin: 0; }
-.editing .scene-freepos { z-index: 2; }
 
 /* Drag handles: shown on every bound text field in edit mode, over the scene content (grabbing the
    handle moves the text; the text itself stays click-to-edit, so dragging never fights text selection). */
-.scene-drag-handles { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
+.scene-drag-handles { position: absolute; inset: 0; z-index: 7; pointer-events: none; }
 .drag-handle {
-  position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 7px;
+  position: absolute; width: 24px; height: 24px; margin: -28px 0 0 -12px; border-radius: 7px; /* just above the text, never over it */
   background: #1a1400; color: #fff; border: 2px solid #fff; padding: 0; cursor: move;
   display: flex; align-items: center; justify-content: center; pointer-events: auto; touch-action: none;
 }
+.drag-handle.is-selected { background: var(--sel); border-color: #fff; color: #06222b; }
 .drag-handle svg { width: 14px; height: 14px; }
 .drag-reset {
-  position: absolute; width: 20px; height: 20px; margin: -34px 0 0 -10px; border-radius: 50%; border: 0;
+  position: absolute; width: 20px; height: 20px; margin: -26px 0 0 18px; border-radius: 50%; border: 0;
   background: #1a1400; color: #fff; font-size: 11px; line-height: 20px; padding: 0; pointer-events: auto; cursor: pointer;
 }
+.lock-badge { position: absolute; margin: -10px 0 0 -10px; font-size: 14px; line-height: 1; filter: drop-shadow(0 1px 1px #000); pointer-events: none; }
+.scene.dragging .scene-drag-handles, .scene.dragging .scene-selbox { visibility: hidden; }
 
 /* ---------- Decorations (shapes): colour is either automatic (the scene accent) or one of the
-   curated roles below — never an open picker. z: "back" (default, behind content) or "front". ---------- */
-.scene-decor { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
-.scene-decor-front { z-index: 2; }
+   curated roles — never an open picker. z: "back" (default, behind content) or "front". ---------- */
 .deco {
   --deco-w: 14; --deco-h: 14;
   position: absolute; width: calc(var(--deco-w) * 1vmin); height: calc(var(--deco-h) * 1vmin);
@@ -671,32 +683,35 @@ kbd {
 .deco-circle .deco-fill { border-radius: 50%; }
 .deco-rectangle .deco-fill { border-radius: 1.6vmin; }
 .deco-triangle .deco-fill { clip-path: polygon(50% 2%, 98% 96%, 2% 96%); box-shadow: none; filter: drop-shadow(0 0.8vmin 0 rgba(0, 0, 0, 0.18)); }
+/* Arrow / line: a stroke along the box's width (thickness follows its height), not a filled area. */
+.deco-stroke { filter: drop-shadow(0 0.6vmin 0 rgba(0, 0, 0, 0.18)); }
+.deco-shaft {
+  position: absolute; left: 0; right: 0; top: 50%; height: calc(var(--deco-h) * 0.28vmin); transform: translateY(-50%);
+  border-radius: 99px; background: var(--deco-fill, var(--accent));
+}
+.deco-arrow .deco-shaft { right: calc(var(--deco-h) * 0.8vmin); border-radius: 99px 0 0 99px; }
+.deco-head {
+  position: absolute; right: 0; top: 0; bottom: 0; width: calc(var(--deco-h) * 0.9vmin);
+  clip-path: polygon(0 0, 100% 50%, 0 100%); background: var(--deco-fill, var(--accent));
+}
 .deco-label {
   position: relative; max-width: 90%; text-align: center; overflow-wrap: anywhere;
   color: var(--deco-label-ink, var(--accent-ink, #17122b)); font-weight: 900; font-size: clamp(1rem, 2vw, 2.2rem); line-height: 1.05;
 }
 .deco-triangle .deco-label { margin-top: 28%; max-width: 60%; }
 @keyframes deco-bob { 0%, 100% { translate: 0 0; } 50% { translate: 0 -1.2vmin; } }
-.editing .scene-decor, .editing .scene-decor-front { z-index: 3; }
-.editing .scene-decor-front { z-index: 4; }
 .editing .deco { pointer-events: auto; cursor: move; animation: none; touch-action: none; }
+.editing .deco.locked { cursor: default; }
 .editing .deco:focus { outline: 3px solid #fff; outline-offset: 6px; }
-.editing .deco.moving { opacity: 0.85; }
+.editing .deco.is-selected, .editing .scene-freepos > .is-selected { outline: 3px solid var(--sel); outline-offset: 6px; }
 .editing .deco .deco-label.editable { outline-offset: 2px; min-width: 2ch; }
 .deco-del, .deco-handle { position: absolute; z-index: 2; display: none; }
-.editing .deco:hover .deco-del, .editing .deco:focus-within .deco-del, .editing .deco:focus .deco-del,
-.editing .deco:hover .deco-handle, .editing .deco:focus-within .deco-handle, .editing .deco:focus .deco-handle { display: block; }
+.editing .deco:hover .deco-del, .editing .deco:focus-within .deco-del, .editing .deco:focus .deco-del, .editing .deco.is-selected .deco-del,
+.editing .deco:hover .deco-handle, .editing .deco:focus-within .deco-handle, .editing .deco:focus .deco-handle, .editing .deco.is-selected .deco-handle { display: block; }
 .deco-del { top: -12px; right: -12px; width: 26px; height: 26px; border-radius: 50%; border: 0; background: #1a1400; color: #fff; font-size: 13px; line-height: 26px; padding: 0; z-index: 3; }
-.deco-tools {
-  position: absolute; left: 50%; top: -50px; transform: translateX(-50%); z-index: 3;
-  display: none; align-items: center; gap: 5px; padding: 5px; border-radius: 10px; background: rgba(10, 8, 20, 0.75);
-}
-.editing .deco:hover .deco-tools, .editing .deco:focus-within .deco-tools, .editing .deco:focus .deco-tools { display: flex; }
 .deco-swatch { width: 20px; height: 20px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.55); padding: 0; cursor: pointer; background: var(--sw, var(--accent)); }
 .deco-swatch.active { border-color: #fff; box-shadow: 0 0 0 2px #1a1400; }
 .deco-swatch-auto { background: repeating-linear-gradient(45deg, #fff, #fff 3px, #999 3px, #999 6px); }
-.deco-front-toggle { width: 22px; height: 22px; border-radius: 6px; border: 0; background: #33305a; color: #fff; font-size: 11px; font-weight: 900; padding: 0; cursor: pointer; }
-.deco-front-toggle.active { background: var(--edit); color: #1a1400; }
 .deco-handle { width: 14px; height: 14px; border-radius: 4px; background: #fff; border: 3px solid #1a1400; padding: 0; }
 .deco-handle-nw { left: -7px; top: -7px; cursor: nwse-resize; }
 .deco-handle-ne { right: -7px; top: -7px; cursor: nesw-resize; }
@@ -706,6 +721,85 @@ kbd {
 .deco-handle-s { left: calc(50% - 7px); bottom: -7px; cursor: ns-resize; }
 .deco-handle-w { left: -7px; top: calc(50% - 7px); cursor: ew-resize; }
 .deco-handle-e { right: -7px; top: calc(50% - 7px); cursor: ew-resize; }
+
+/* ---------- Selection, rotation handle, guides, marquee (edit mode) ---------- */
+.stagewrap { --sel: #4de1ff; }
+.scene-selbox { position: absolute; inset: 0; z-index: 8; pointer-events: none; }
+.rot-handle {
+  position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%; padding: 0;
+  border: 2px solid #fff; background: var(--sel); color: #06222b; font-weight: 900; font-size: 15px; line-height: 1;
+  pointer-events: auto; cursor: grab; touch-action: none;
+}
+.scene-guides { position: absolute; inset: 0; z-index: 8; pointer-events: none; }
+.guide { position: absolute; display: block; background: #ff4dd8; }
+.guide-v { top: 0; bottom: 0; width: 1px; }
+.guide-h { left: 0; right: 0; height: 1px; }
+.guide-angle { width: 300vmax; height: 1px; }
+.marquee { position: absolute; z-index: 9; border: 1px dashed var(--sel); background: rgba(77, 225, 255, 0.12); pointer-events: none; }
+.stagewrap.space-pan .scene { cursor: grab; }
+.sel-tools {
+  position: absolute; z-index: 7; display: flex; flex-direction: column; gap: 5px; padding: 6px; border-radius: 12px;
+  background: rgba(12, 13, 34, 0.94); border: 1px solid var(--line); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); color: #fff;
+}
+.sel-tools[hidden] { display: none; }
+.st-row { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.st-label { font-size: 0.75rem; font-weight: 800; color: var(--muted); margin-right: 2px; }
+.st-btn {
+  min-width: 28px; height: 28px; padding: 0 7px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel-2); color: #fff;
+  font-size: 0.8rem; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.st-btn svg { width: 18px; height: 18px; }
+.st-btn:hover { border-color: var(--edit); }
+.st-btn.active { background: var(--edit); color: #1a1400; border-color: var(--edit); }
+.st-danger:hover { color: #ff8fa0; border-color: #ff8fa0; }
+.st-field { display: inline-flex; align-items: center; gap: 3px; font-size: 0.75rem; font-weight: 800; color: var(--muted); }
+.st-num { width: 4.4em; height: 28px; padding: 0 4px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); color: #fff; font: inherit; font-size: 0.8rem; }
+.st-radius { width: 80px; }
+
+/* Right-click menu */
+.ctx-menu {
+  position: fixed; z-index: 65; min-width: 190px; padding: 5px; border-radius: 10px; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+}
+.ctx-item {
+  display: flex; justify-content: space-between; gap: 1rem; padding: 0.45rem 0.6rem; border: 0; border-radius: 7px;
+  background: transparent; color: #fff; font-weight: 700; text-align: left; cursor: pointer;
+}
+.ctx-item:hover { background: rgba(255, 255, 255, 0.1); }
+.ctx-item kbd { font-size: 0.7rem; }
+.ctx-danger { color: #ff8fa0; }
+
+/* Layers popover, zoom control */
+.layer-list { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.6rem; }
+.layer-row {
+  display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.6rem; border-radius: 9px; text-align: left;
+  border: 1px solid var(--line); background: var(--panel-2); color: #fff;
+}
+.layer-row.active { border-color: var(--sel); background: rgba(77, 225, 255, 0.12); }
+.layer-kind { flex: none; font-size: 0.72rem; font-weight: 800; color: var(--muted); min-width: 6.5em; }
+.layer-name { flex: 1; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layer-tag { flex: none; font-size: 0.72rem; color: var(--muted); }
+.tb-zoom { align-items: center; }
+.tb-zoom-val { min-width: 3.4em; height: 30px; border: 0; border-radius: 8px; background: transparent; color: #e9e7ff; font-weight: 800; font-size: 0.8rem; }
+.tb-zoom-val:hover { background: rgba(255, 255, 255, 0.1); }
+
+/* Narrower screens: a compact toolbar so every tool (and Done) stays on screen. Zoom keeps its keys
+   (Ctrl + / Ctrl - / Ctrl 0) where its buttons are hidden; the toolbar scrolls as a last resort. */
+.edit-toolbar { overflow-x: auto; scrollbar-width: none; }
+.edit-toolbar::-webkit-scrollbar { display: none; }
+.tb-done { position: sticky; right: 0; flex: none; }
+@media (max-width: 1400px) {
+  .edit-toolbar { gap: 0.2rem; padding: 0 0.5rem; }
+  .tb-group { padding: 0 0.2rem; gap: 0; }
+  .tb-btn { width: 36px; height: 38px; }
+  .tb-icon { width: 21px; height: 21px; }
+  .tb-zoom-val { min-width: 2.9em; }
+}
+@media (max-width: 1150px) {
+  .tb-btn { width: 32px; }
+  .tb-zoom { display: none; }
+}
+.tb-btn.tb-done { width: auto; }
 .editing .scene-bg i { animation-play-state: paused; }
 
 /* ================= Help + toast ================= */
