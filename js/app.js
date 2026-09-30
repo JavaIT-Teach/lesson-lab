@@ -27,6 +27,8 @@
     runtime: {}, // live in-stage state per lesson::stage (ctx.state); memory only, never saved
     lastStage: {}, // lessonId -> index of the stage last shown (lesson menu: "Continue")
     visited: {}, // lessonId -> { stageId: true } stages shown this session
+    homeEdit: false, // home screen: E shows the Hide control on lesson tiles
+    showHidden: false, // home screen: list hidden lessons (with Unhide)
     undo: [],
     lastKey: null,
     lastTime: 0,
@@ -59,6 +61,7 @@
       goTo(r.stage);
       return;
     }
+    if (r.view !== "home" && r.view !== "level") S.homeEdit = false;
     S.route = r;
     S.help = false;
     if (r.view === "menu") {
@@ -84,7 +87,7 @@
     return Object.keys(LL.lessons)
       .map(function (id) {
         var lesson = LL.store.effectiveLesson(id);
-        return { id: id, lesson: lesson, path: LL.lessons[id].path, valid: LL.validateLesson(lesson, LL.lessons[id].path) };
+        return { id: id, lesson: lesson, path: LL.lessons[id].path, valid: LL.validateLesson(lesson, LL.lessons[id].path), hidden: lesson.hidden === true };
       })
       .filter(function (x) { return x.lesson.level === levelId || x.path.split("/")[0] === levelId; })
       .sort(function (a, b) {
@@ -128,7 +131,7 @@
     if (r.view === "home") {
       var grid = h("nav", { class: "tiles levels", "aria-label": "Levels" });
       LL.levels.forEach(function (lvl, i) {
-        var count = lessonsForLevel(lvl.id).length;
+        var count = lessonsForLevel(lvl.id).filter(function (x) { return !x.hidden; }).length;
         grid.appendChild(
           h(
             "button",
@@ -149,12 +152,29 @@
           h("h2", { class: "crumb-title lvl-text-" + li, text: level.name })
         )
       );
-      var list = lessonsForLevel(level.id);
-      var tiles = h("nav", { class: "tiles lessons", "aria-label": "Lessons" });
-      if (!list.length) tiles.appendChild(h("p", { class: "empty", text: "No lessons at this level yet." }));
+      var all = lessonsForLevel(level.id);
+      var list = all.filter(function (x) { return !x.hidden; });
+      var hiddenList = all.filter(function (x) { return x.hidden; });
+      if (S.homeEdit) {
+        screen.appendChild(h("div", { class: "home-edit-bar" },
+          h("b", { class: "edit-badge", text: "EDIT" }),
+          " Hide takes a lesson off this list on every device. Nothing is deleted: “Show hidden” brings it back. ",
+          h("button", { class: "btn", onclick: function () { setHomeEdit(false); } }, "Done (E)")
+        ));
+      }
+      var tiles = h("nav", { class: "tiles lessons" + (S.homeEdit ? " home-editing" : ""), "aria-label": "Lessons" });
+      if (!list.length) tiles.appendChild(h("p", { class: "empty", text: hiddenList.length ? "No visible lessons at this level." : "No lessons at this level yet." }));
       list.forEach(function (x, i) {
         var mins = (x.lesson.stages || []).reduce(function (a, s) { return a + (Number(s.minutes) || 0); }, 0);
-        tiles.appendChild(
+        var wrap = h("div", { class: "tile-wrap" });
+        tiles.appendChild(wrap);
+        if (S.homeEdit) {
+          wrap.appendChild(h("button", {
+            class: "tile-hide", title: "Hide this lesson (reversible)",
+            onclick: function () { hideLesson(x.id, true); }
+          }, "Hide"));
+        }
+        wrap.insertBefore(
           h(
             "button",
             { class: "tile lesson-tile lvl-" + li, onclick: function () { go("#/lesson/" + encodeURIComponent(x.id)); } },
@@ -167,20 +187,60 @@
               LL.store.hasEdits(x.id) ? h("em", { class: "badge badge-edit", text: "Has teacher edits" }) : null,
               x.valid.count ? h("em", { class: "badge badge-warn", text: "⚠ " + x.valid.count + (x.valid.count === 1 ? " problem" : " problems") }) : null
             )
-          )
+          ),
+          wrap.firstChild
         );
       });
       screen.appendChild(tiles);
+
+      // Hidden lessons stay reachable: a small toggle lists them, each with Open and Unhide.
+      if (hiddenList.length) {
+        var box = h("section", { class: "hidden-box" },
+          h("button", { class: "btn hidden-toggle", onclick: function () { S.showHidden = !S.showHidden; renderHome(); } },
+            (S.showHidden ? "Hide the hidden list" : "Show hidden") + " (" + hiddenList.length + ")"));
+        if (S.showHidden) {
+          box.appendChild(h("ul", { class: "hidden-list" }, hiddenList.map(function (x) {
+            return h("li", null,
+              h("span", { class: "hidden-title", text: "Unit " + x.lesson.unit + " · " + x.lesson.title }),
+              x.valid.count ? h("em", { class: "badge badge-warn", text: "⚠ " + x.valid.count }) : null,
+              h("button", { class: "btn", onclick: function () { go("#/lesson/" + encodeURIComponent(x.id)); } }, "Open"),
+              h("button", { class: "btn btn-primary", onclick: function () { hideLesson(x.id, false); } }, "Unhide")
+            );
+          })));
+        }
+        screen.appendChild(box);
+      }
     }
 
     var probs = problemsBox();
     if (probs) screen.appendChild(probs);
-    screen.appendChild(h("p", { class: "home-hint" }, "Arrow keys to move · Enter to open · ", h("kbd", null, "S"), " settings · ", h("kbd", null, "?"), " for all keys"));
+    screen.appendChild(h("p", { class: "home-hint" }, "Arrow keys to move · Enter to open · ", h("kbd", null, "S"), " settings · ", h("kbd", null, "E"), " hide lessons · ", h("kbd", null, "?"), " for all keys"));
     root.appendChild(screen);
     renderHelp();
 
     var first = screen.querySelector(".tile");
     if (first) first.focus({ preventScroll: true });
+  }
+
+  /* Home edit (E): shows Hide on lesson tiles. Gated like every other write. */
+  function setHomeEdit(on) {
+    if (on && !LL.store.canEdit()) {
+      toast("View only on this device. To hide lessons, add a GitHub token in Settings (S).", true);
+      return;
+    }
+    S.homeEdit = on;
+    renderHome();
+  }
+
+  function hideLesson(id, on) {
+    if (!LL.store.canEdit()) {
+      toast("View only on this device. To " + (on ? "hide" : "unhide") + " lessons, add a GitHub token in Settings (S).", true);
+      return;
+    }
+    var lesson = LL.store.effectiveLesson(id);
+    if (!LL.store.setHidden(id, on)) return toast(LL.store.lastError || "Could not save this change.", true);
+    renderHome();
+    toast((on ? "Hidden: " : "Back on the list: ") + ((lesson && lesson.title) || id) + (on ? ". “Show hidden” brings it back." : "."));
   }
 
   function moveHomeFocus(dx, dy) {
@@ -1302,7 +1362,8 @@
       ["Esc", "Stop typing / leave edit mode"]
     ]],
     ["Home screen", [
-      ["S", "Settings (GitHub sync, backup)"]
+      ["S", "Settings (GitHub sync, backup)"],
+      ["E", "Edit: show Hide on lesson tiles (hidden lessons: “Show hidden”)"]
     ]],
     ["Anywhere", [
       ["?", "Show / hide keys"],
@@ -1387,6 +1448,7 @@
       if (inLesson && S.editing) return setEditing(false);
       if (inLesson && S.teacher) return setTeacher(false);
       if (inLesson) return goLevel();
+      if (S.homeEdit && (S.route.view === "level" || S.route.view === "home")) return setHomeEdit(false);
       if (S.route.view === "menu") return goLevel();
       if (S.route.view === "level" || S.route.view === "settings") return go("#/");
       return;
@@ -1422,6 +1484,7 @@
       }
       if (k === "Backspace" && S.route.view === "level") { e.preventDefault(); return go("#/"); }
       if (k === "s" || k === "S") return go("#/settings");
+      if (k === "e" || k === "E") return setHomeEdit(!S.homeEdit);
       if (/^[1-9]$/.test(k)) {
         var tiles = root.querySelectorAll(".tile");
         var t = tiles[Number(k) - 1];

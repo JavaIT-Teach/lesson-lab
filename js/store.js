@@ -151,6 +151,20 @@
       return rec.doc;
     },
 
+    /* Hidden = a lesson-level `hidden: true` override. Never deletes or edits a lesson file. */
+    isHidden: function (id) {
+      var l = this.effectiveLesson(id);
+      return !!(l && l.hidden === true);
+    },
+
+    setHidden: function (id, on) {
+      var work = this.effectiveLesson(id);
+      if (!work) return null;
+      if (on) work.hidden = true;
+      else delete work.hidden;
+      return this.recordEdit(id, work, this.doc(id));
+    },
+
     resetLesson: function (id) {
       var rec = this.record(id) || { doc: null, synced: null, sha: null, dirty: false };
       rec.doc = ov.reset(rec.doc, id, Date.now());

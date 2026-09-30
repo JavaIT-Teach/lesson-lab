@@ -76,6 +76,7 @@ LL.registerLesson({
   unit: "1",                       // text
   mainAim: "Students can …",
   subAims: ["…", "…"],             // list; may be empty
+  // hidden: true                  // NOT written in lesson files: set by the Hide control, as an override
   stages: [                        // ordered; at least one
     {
       id: "warm-up",               // PERMANENT; unique within the lesson; letters, digits, - and _
@@ -101,6 +102,8 @@ LL.registerLesson({
 `audioCue` (optional): a short text such as `"Listen: Track 3"`. If a stage has it, a headphones badge shows next to the stage title in both student and teacher view, and in the teacher panel. It is editable in edit mode (in place and in the side panel). Leave it out when the stage has no recording. If present it must be text.
 
 `worksheetLabel` (optional): a short text such as `"Worksheet Part 2"`. It marks that the stage has a paired printed worksheet and names it. Metadata only: it shows with 📝 on that stage's line in the lesson menu and in teacher view, not on the student scene. Editable in edit mode (side panel), no forced value. Leave it out when there is no worksheet. If present it must be text.
+
+`hidden` (lesson level, optional, true/false): takes the lesson off the home screen lists. It is set and cleared by the app's Hide / Unhide controls as a normal override (`"hidden"` entry in `data/overrides/<lesson-id>.js`), so it is reversible and synced like any edit. Do not write it into lesson files by hand; folding a hidden lesson's overrides would carry it into the base file, so check before folding.
 
 To make a lesson appear, add one line to `lessons/manifest.js`: `"<level-id>/<lesson-id>.js"`. Every lesson prompt still needs this line.
 
@@ -168,6 +171,7 @@ Edit mode:
 - Stages: add, duplicate, delete, move up/down. List items: add, delete, move. Undo: `Ctrl+Z` / `U` / Undo button.
 - Every change is recorded as overrides, cached in `localStorage` (`lessonlab.overrides.v2`) for offline use.
 - "Has teacher edits" badge on a lesson = it has overrides. "Reset lesson to original" clears that lesson's overrides (on every device once saved).
+- **Hide / Unhide a lesson** (home screen): `E` on the home screen (a level's lesson list) shows a Hide control on each lesson tile, gated like every other write (view-only devices cannot hide). Hide records a lesson-level `hidden: true` override; the tile leaves the normal list and the level count. "Show hidden (n)" under the tiles lists hidden lessons with Open and Unhide; Unhide clears the flag (the entry becomes an "edit undone" tombstone, like any undone edit). **The app never deletes a lesson file or edits `lessons/manifest.js`.** Removing a lesson for real is a repo edit by Claude.
 
 GitHub sync (public repo):
 - Settings (`S` on the home screen) → Save edits to GitHub. The teacher pastes a fine-grained token (Contents: Read and write, this repo only) once per device. It is stored only in that device's `localStorage`: never in the repo, never in a backup file.
@@ -199,6 +203,8 @@ Backup: Export writes one `.json` file with every lesson's overrides and the con
 
 Home (levels) → level (lesson tiles) → **lesson menu** → stage scene.
 
+- **Home / level**: `E` toggles home edit (Hide on each lesson tile; `Esc` or Done leaves it). Hidden lessons are not on the tiles or in the level counts; "Show hidden (n)" under the tiles lists them with Open (goes to their lesson menu) and Unhide.
+
 - **Lesson menu** (`#/lesson/<id>`): opening a lesson tile lands here, not on stage 1. One numbered line per stage, in order: title, minutes, and 📝 + `worksheetLabel` when the stage has one (⚠ if the stage has problems). Click a line, or `↑ ↓` + `Enter`, or `1–9`, to open that stage. The stage last shown this session is highlighted ("▶ Continue") and focused; stages already shown get a ring on their number. `H` / `Esc` / `Backspace` go back to the lesson list. It is a teacher navigation screen: no edit mode here.
 - **Stage scene** (`#/lesson/<id>/<n>`): unchanged — rail, ‹ › / arrows, per-stage timer, teacher view, edit mode. `L` or the ☰ HUD button returns to the lesson menu; `H` / ⌂ / `Esc` still go back to the lesson list.
 - Where the teacher left off (last stage, stages shown) is kept in memory for the session only, like timers and `ctx.state`; a page reload clears it.
@@ -210,6 +216,7 @@ Home (levels) → level (lesson tiles) → **lesson menu** → stage scene.
 3. **Keyboard-first.** Every action has a key. `?` shows them all. Keep the key map in `js/app.js` (`KEYS`) in sync with the handler.
 4. **Every student speaks.** Every mechanic must say how it keeps all students talking at once, not one at a time.
 5. **Teacher information stays hidden** from students unless the teacher opens teacher view (`T`).
+6. **No walls of text.** No mechanic renders more than about one sentence of instruction as a single unbroken block of prose. Multi-part instructions get a short title plus short numbered steps (see `prompt-card`'s `title` + `steps`).
 
 ## Key map (current)
 
@@ -217,7 +224,7 @@ In-stage keys (per mechanic, listed by `?` and in teacher view): see MECHANICS.m
 Lesson: `→`/`PageDown` next · `←`/`PageUp` previous · `1–9` jump · `Home`/`End` · `Space` timer start/pause · `X` reset timer · `C` fold/unfold timer (remembered) · `R` fold/unfold rail · `T` teacher view · `L` lesson menu · `H`/`Backspace` back to lesson list.
 Lesson menu: `↑ ↓` + `Enter` or `1–9` open a stage · `H`/`Esc`/`Backspace` back to lesson list.
 Edit: `E` toggle · `Ctrl+Z`/`U` undo · `A` add stage · `Alt+↑/↓` move stage · `Delete` delete stage · `Esc` stop typing / leave.
-Home: `S` settings.
+Home: `S` settings · `E` home edit (Hide on lesson tiles) · "Show hidden" lists hidden lessons (Unhide).
 Anywhere: `?` keys · `F` full screen · arrows + `Enter` on home · `Esc` back.
 
 ## Working rules for every future prompt
@@ -230,4 +237,4 @@ Anywhere: `?` keys · `F` full screen · arrows + `Enter` on home · `Esc` back.
 
 ## Sample content
 
-`lessons/beginner/sample-hello.js` and `assets/sample/` are a SAMPLE that proves the loop. `lessons/beginner/sample-mechanics.js` is a SAMPLE with one demo stage each for `reveal-board`, `drill-check`, `pair-mission` and `team-game` (and `audioCue`). Delete them and their manifest lines once real lessons exist (fold or clear `data/overrides/sample-hello.js` first, per the rules above).
+The SAMPLE lessons (`sample-hello`, `sample-mechanics`) and `assets/sample/` were removed once real lessons existed. There is no sample content now; `lessons/beginner/starter-in-the-classroom.js` is the reference lesson (it uses every mechanic).

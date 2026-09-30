@@ -5,6 +5,7 @@ One entry per mechanic in `mechanics/`. Reuse before building. Update this file 
 Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 - A list field holds objects, and every item in lesson data has a permanent `id`. Lists of plain values are rejected.
 - A picture field is a text field with `format: "image"`; edit mode adds "Upload / replace image" next to it.
+- No walls of text (CLAUDE.md design principle 6): at most about one sentence of instruction as one block of prose; multi-part instructions become a title + short numbered steps.
 - Live in-stage state (highlight, revealed answers, scores, rounds) lives in `ctx.state`: kept while the page is open, never saved, never in `data`.
 - In-stage keys work outside edit mode only. Shared meanings across mechanics: `N` next · `B` back · `O` clear / reset the live state · `M` switch mode · `V` reveal / vary. `?` lists the current stage's keys; teacher view shows them too.
 
@@ -12,7 +13,7 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 
 | Need | Mechanic |
 |------|----------|
-| One prompt, everyone answers in pairs | `prompt-card` |
+| One prompt, or a title + short numbered steps; everyone answers in pairs | `prompt-card` |
 | A fixed set (alphabet, numbers, word set) on screen; chorus by item or sound group; "what's missing?" | `reveal-board` |
 | Students commit (write / tell partner) before the answer is shown | `drill-check` |
 | Mingle or fixed-partner drill over several rounds with a language frame | `pair-mission` |
@@ -23,22 +24,25 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 ## prompt-card
 
 - **File:** `mechanics/prompt-card.js`
-- **What it does:** Shows one big prompt, with an optional picture and an optional interaction cue (who speaks with whom). Placeholder mechanic built to prove the stage loop.
-- **Language it forces:** Whatever the prompt targets. The stage's `rationale.language` names it.
-- **What students produce:** Spoken answers to the prompt, in the pairing the cue sets. The stage's `rationale.output` names it.
+- **What it does:** Either one big prompt (one short sentence) **or** a large activity title with short numbered steps, plus an optional picture and an optional interaction cue (who speaks with whom). With `steps`, each step is its own line with a number badge, never a paragraph. Without `steps`, the prompt renders exactly as before (word-by-word entrance).
+- **Language it forces:** Whatever the prompt or steps target. The stage's `rationale.language` names it.
+- **What students produce:** Spoken answers to the prompt / steps, in the pairing the cue sets. The stage's `rationale.output` names it.
 - **Required data fields:**
 
   | Field        | Type | Required | Notes |
   |--------------|------|----------|-------|
-  | `prompt`     | text | yes      | The question or task. Multi-line allowed. |
+  | `title`      | text | no       | Large activity heading above the steps (separate from the small stage-title pill top-left). Shown whenever set. |
+  | `prompt`     | text | one of prompt / steps | The question or task, one short sentence. Ignored when `steps` has items. |
+  | `steps`      | list | one of prompt / steps | Ordered short steps. Each: `id`, `text` (required). Rendered as a numbered list replacing the prompt. |
   | `cue`        | text | no       | Interaction cue, e.g. "Pairs: A asks, B answers. Swap." |
-  | `picture`    | text | no       | Path relative to `index.html` (e.g. `assets/…/x.svg`) or web address (web addresses fail offline). Edit mode offers "Upload / replace image" here (matched by field name; the schema has no `format: "image"` flag yet). |
+  | `picture`    | text | no       | Path relative to `index.html` (e.g. `assets/…/x.svg`) or web address (web addresses fail offline). Edit mode offers "Upload / replace image" here (matched by field name). |
   | `pictureAlt` | text | no       | Shown if the picture cannot load. |
 
-- **How it keeps every student speaking:** The cue names who speaks with whom. Everyone answers the same prompt at the same time, so no one waits for a turn. It is only as strong as its cue: a stage with no cue risks one-at-a-time answers.
+- **Extra validation (`validate`):** a stage needs a non-empty `prompt` or at least one step.
+- **How it keeps every student speaking:** The cue names who speaks with whom. Everyone answers the same prompt (or works through the same steps) at the same time, so no one waits for a turn. It is only as strong as its cue: a stage with no cue risks one-at-a-time answers.
 - **In-stage keys:** none.
-- **Lists / item ids:** none (no list fields).
-- **Lessons that use it:** `beginner/sample-hello` (SAMPLE — all 3 stages); `beginner/starter-in-the-classroom` — `cheat-sheet-partner`.
+- **Lists / item ids:** `steps[].id`.
+- **Lessons that use it:** `beginner/starter-in-the-classroom` — `cheat-sheet-partner` (title + 3 steps + worksheet cue).
 
 ---
 
@@ -67,7 +71,6 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 - **In-stage keys:** `N` / `B` highlight next / previous item · `G` highlight next group (after the last group: off) · `O` clear highlight · `M` missing-item mode on/off · `V` blank a new random set (and turn missing-item mode on) · click an item: highlight it, or in missing-item mode blank / unblank it.
 - **Lists / item ids:** `items[].id`, `groups[].id`. Live state refers to these ids; deleted ids drop out.
 - **Lessons that use it:**
-  - `beginner/sample-mechanics` (SAMPLE — stage `alphabet-board`: 26 letters, 7 sound groups, 10 blankable, 5 blanked at a time).
   - `beginner/starter-in-the-classroom` — `numbers-1-20` (1–20, one group "-teen: 13–19"), `classroom-objects` (13 pictures), `colours-stroop` (9 colour words with a different `textColor` each).
 
 ---
@@ -90,7 +93,6 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 - **In-stage keys:** `N` / `B` next / previous item (in "all" mode: moves the focus) · `V` reveal / hide the current item's answer · `Shift+V` reveal all / hide all · `M` switch step ↔ all · `O` hide every answer · click an item (all mode): reveal / hide that item.
 - **Lists / item ids:** `items[].id`. Revealed answers are live state keyed by these ids.
 - **Lessons that use it:**
-  - `beginner/sample-mechanics` (SAMPLE — stage `spell-it`: 4 spelling items, one with a picture).
   - `beginner/starter-in-the-classroom` — `birthday-cakes` (Ex 5: cakes A–F with pictures, no audio), `how-old-are-you` (Ex 6 answer key, Ryan–Lara, audioCue "Listen: Track 5"), `days-order` (7 days, opens in "all" mode), `days-spelling` (7 misspelled days), `colours-ttt` (9 colour swatches).
 
 ---
@@ -117,7 +119,6 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 - **In-stage keys:** `N` next round (swap cue + round timer restart; after the last round: "Mission complete") · `B` back one round · `P` pause / restart the round timer · `W` show the swap cue again · `O` start again from round 1.
 - **Lists / item ids:** `bank[].id`.
 - **Lessons that use it:**
-  - `beginner/sample-mechanics` (SAMPLE — stage `letter-mingle`: secret-letter mingle, 3 rounds, 1-minute rounds).
   - `beginner/starter-in-the-classroom` — `meet-classmates` (name / spelling / age mingle, 3 rounds, no bank).
 
 ---
@@ -143,5 +144,4 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 - **In-stage keys:** `N` call the next item · `B` take back the last call · `Shift+1`–`Shift+9` +1 point for team 1–9 · `K` hand calling to a student / back to the teacher · `O` new round (clears the called list, keeps scores) · click `+` / `−` on a team to score · teacher view: click a pool item to call it, "Reset scores" button.
 - **Lists / item ids:** `teams[].id`, `pool[].id`. Called list and scores are live state keyed by these ids.
 - **Lessons that use it:**
-  - `beginner/sample-mechanics` (SAMPLE — stage `letter-bingo`: 2 teams, 14-letter shuffled pool).
   - `beginner/starter-in-the-classroom` — `bingo` (pool = number words one–twenty, shuffled; no teams, so no scoreboard).

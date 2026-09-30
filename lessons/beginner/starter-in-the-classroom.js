@@ -27,7 +27,12 @@ LL.registerLesson({
       minutes: 5,
       mechanic: "prompt-card",
       data: {
-        prompt: "Keep your Alphabet Sound Sheet — review it for a minute. Then ask your partner: What's your name? / How do you spell it?",
+        title: "Cheat Sheet & Partner Intro",
+        steps: [
+          { id: "review", text: "Review the cheat sheet." },
+          { id: "ask-name", text: "Ask your partner: \"What's your name?\"" },
+          { id: "ask-spell", text: "Ask: \"How do you spell it?\"" }
+        ],
         cue: "Pairs — write their answer on Worksheet Part 1.",
         picture: "",
         pictureAlt: ""

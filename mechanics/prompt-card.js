@@ -1,7 +1,8 @@
 /*
  * Mechanic: prompt-card
- * One big prompt, an optional picture, and an optional interaction cue.
- * Placeholder mechanic that proves the stage loop. See MECHANICS.md.
+ * One big prompt — or an activity title with short numbered steps — plus an optional
+ * picture and an optional interaction cue. Without steps, the prompt renders as it always has.
+ * See MECHANICS.md.
  */
 (function () {
   "use strict";
@@ -11,16 +12,29 @@
 
   LL.registerMechanic({
     id: "prompt-card",
-    description: "One big prompt on screen, with an optional picture and an optional interaction cue.",
+    description: "One big prompt on screen — or an activity title with short numbered steps — with an optional picture and an optional interaction cue.",
     speaking:
       "The cue names who speaks with whom (for example 'Pairs: A asks, B answers, then swap'). " +
       "Everyone answers the same prompt at the same time, so no one waits for a turn.",
 
     schema: {
-      prompt: { type: "string", required: true, multiline: true, label: "Prompt", help: "The question or task students respond to." },
+      title: { type: "string", label: "Activity title", placeholder: "Cheat Sheet & Partner Intro", help: "Optional. A large heading above the steps (different from the small stage-title pill top-left)." },
+      prompt: { type: "string", multiline: true, label: "Prompt", help: "The question or task, as one short sentence. For a task with several parts, leave this empty and use Steps." },
+      steps: {
+        type: "list", label: "Steps", itemLabel: "Step",
+        help: "Optional. Short numbered steps shown instead of the prompt — one action each.",
+        item: { type: "object", fields: { text: { type: "string", required: true, label: "Step", placeholder: "Ask your partner: “What's your name?”" } } }
+      },
       cue: { type: "string", label: "Interaction cue", placeholder: "Pairs: A asks, B answers. Swap.", help: "Optional. Who speaks with whom." },
       picture: { type: "string", label: "Picture", placeholder: "assets/…/file.svg", help: "Optional. A file path (relative to index.html) or web address." },
       pictureAlt: { type: "string", label: "Picture description", help: "Optional. Shown if the picture cannot load." }
+    },
+
+    // Every stage needs something to show: a prompt or at least one step.
+    validate: function (data) {
+      var hasSteps = Array.isArray(data.steps) && data.steps.length > 0;
+      var hasPrompt = typeof data.prompt === "string" && data.prompt.trim() !== "";
+      return hasSteps || hasPrompt ? [] : ["Give a Prompt, or at least one Step."];
     },
 
     css: [
@@ -45,11 +59,24 @@
       "@keyframes pc-cue { from { opacity: 0; transform: scale(0.5); } to { opacity: 1; transform: none; } }",
       "@keyframes pc-pic-in { from { opacity: 0; transform: rotate(-20deg) scale(0.5); } to { opacity: 1; transform: rotate(-4deg); } }",
       "@keyframes pc-bob { 0%, 100% { transform: rotate(-4deg) translateY(0); } 50% { transform: rotate(-2deg) translateY(-1.6vmin); } }",
+      /* Title + numbered steps: separate lines with a number badge, never one paragraph. */
+      ".pc-title { margin: 0; font-size: clamp(2.4rem, 5.2vw, 6.4rem); font-weight: 900; line-height: 1.04; letter-spacing: -0.02em;",
+      "  color: var(--ink); text-shadow: 0 0.06em 0 rgba(0,0,0,0.18); overflow-wrap: anywhere; animation: pc-cue 0.55s cubic-bezier(0.2, 1.4, 0.4, 1) both; }",
+      ".pc-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; align-items: stretch; gap: 2.2vh; text-align: left; }",
+      ".pc-step { display: flex; align-items: center; gap: 1.6vw; padding: 1.4vh 2vw 1.4vh 1.2vw; border-radius: 2.4vmin;",
+      "  background: rgba(0,0,0,0.2); box-shadow: 0 0.6vmin 0 rgba(0,0,0,0.15); animation: pc-step 0.55s cubic-bezier(0.2, 1.3, 0.4, 1) both; }",
+      ".pc-step-num { flex: none; display: flex; align-items: center; justify-content: center; width: 1.7em; height: 1.7em; border-radius: 50%;",
+      "  background: var(--accent); color: var(--accent-ink, #17122b); font-weight: 900; font-size: clamp(1.4rem, 2.6vw, 3rem); box-shadow: 0 0.12em 0 rgba(0,0,0,0.22); }",
+      ".pc-step-text { color: var(--ink); font-weight: 800; font-size: clamp(1.5rem, 3vw, 3.6rem); line-height: 1.2; overflow-wrap: anywhere; }",
+      ".pc-has-steps .pc-body { gap: 3vh; }",
+      ".editing .pc-title, .editing .pc-step { animation: none; }",
+      "@keyframes pc-step { from { opacity: 0; transform: translateX(-4vw); } to { opacity: 1; transform: none; } }",
       "@media (max-aspect-ratio: 1/1) { .pc { flex-direction: column; } }"
     ].join("\n"),
 
     render: function (root, data, ctx) {
-      var card = h("div", { class: "pc" + (data.picture ? " pc-has-pic" : "") });
+      var steps = Array.isArray(data.steps) ? data.steps : [];
+      var card = h("div", { class: "pc" + (data.picture ? " pc-has-pic" : "") + (steps.length ? " pc-has-steps" : "") });
 
       if (data.picture) {
         var fig = h("figure", { class: "pc-pic" });
@@ -63,17 +90,37 @@
       }
 
       var body = h("div", { class: "pc-body" });
-      var prompt = h("p", { class: "pc-prompt" });
-      if (ctx.editing) {
-        ctx.bind(prompt, "prompt", { multiline: true });
-      } else {
-        // Word-by-word entrance.
-        String(data.prompt).split(/(\s+)/).forEach(function (w, i) {
-          if (/^\s+$/.test(w)) prompt.appendChild(document.createTextNode(w));
-          else prompt.appendChild(h("span", { class: "pc-word", style: { animationDelay: 120 + i * 45 + "ms" } }, w));
-        });
+
+      // Optional activity title (shown whenever set; placeholder in edit mode when there are steps).
+      if (data.title || (ctx.editing && steps.length)) {
+        var title = h("h2", { class: "pc-title" });
+        ctx.bind(title, "title", { placeholder: "Activity title (optional)" });
+        body.appendChild(title);
       }
-      body.appendChild(prompt);
+
+      if (steps.length) {
+        // Numbered steps replace the prompt: one short line each, never a paragraph.
+        var ol = h("ol", { class: "pc-steps" });
+        steps.forEach(function (st, i) {
+          var text = h("span", { class: "pc-step-text" });
+          ctx.bind(text, "steps." + i + ".text", { placeholder: "Step" });
+          ol.appendChild(h("li", { class: "pc-step", style: { animationDelay: 250 + i * 140 + "ms" } },
+            h("span", { class: "pc-step-num", "aria-hidden": "true", text: String(i + 1) }), text));
+        });
+        body.appendChild(ol);
+      } else {
+        var prompt = h("p", { class: "pc-prompt" });
+        if (ctx.editing) {
+          ctx.bind(prompt, "prompt", { multiline: true });
+        } else {
+          // Word-by-word entrance.
+          String(data.prompt).split(/(\s+)/).forEach(function (w, i) {
+            if (/^\s+$/.test(w)) prompt.appendChild(document.createTextNode(w));
+            else prompt.appendChild(h("span", { class: "pc-word", style: { animationDelay: 120 + i * 45 + "ms" } }, w));
+          });
+        }
+        body.appendChild(prompt);
+      }
 
       if (data.cue || ctx.editing) {
         var cue = h("p", { class: "pc-cue" });

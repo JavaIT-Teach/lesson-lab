@@ -5,7 +5,5 @@
  */
 window.LL = window.LL || {};
 window.LL.manifest = [
-  "beginner/starter-in-the-classroom.js",
-  "beginner/sample-hello.js", // SAMPLE: delete this line and the file when real lessons exist.
-  "beginner/sample-mechanics.js" // SAMPLE: demo of reveal-board, drill-check, pair-mission, team-game. Delete with the other sample.
+  "beginner/starter-in-the-classroom.js"
 ];

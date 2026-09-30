@@ -156,6 +156,24 @@ kbd {
 .empty { color: var(--muted); font-size: 1.3rem; }
 .home-hint { position: relative; margin-top: 4vh; color: var(--muted); }
 
+/* Home edit (E): Hide on lesson tiles; hidden lessons list */
+.tile-wrap { position: relative; display: flex; }
+.tile-wrap > .tile { flex: 1; }
+.home-editing .tile { outline: 2px dashed rgba(255, 216, 77, 0.7); outline-offset: 4px; }
+.tile-hide {
+  position: absolute; z-index: 2; top: -0.7rem; left: -0.7rem;
+  padding: 0.35rem 0.9rem; border: 0; border-radius: 99px;
+  background: var(--edit); color: #1a1400; font-weight: 900; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+.tile-hide:hover { transform: scale(1.06); }
+.home-edit-bar { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin: -0.4rem 0 1.4rem; color: var(--muted); font-weight: 700; }
+.home-edit-bar .edit-badge { padding: 0.15em 0.6em; border-radius: 6px; background: var(--edit); color: #1a1400; }
+.hidden-box { position: relative; margin-top: 2.2rem; }
+.hidden-toggle { opacity: 0.8; }
+.hidden-list { list-style: none; margin: 0.8rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; max-width: 900px; }
+.hidden-list li { display: flex; align-items: center; gap: 0.7rem; padding: 0.6rem 0.9rem; border-radius: 14px; background: rgba(255, 255, 255, 0.06); }
+.hidden-title { flex: 1; font-weight: 800; color: var(--muted); }
+
 /* Lesson menu: home → lesson menu → stage */
 .menu-head { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
 .menu-head .tile-unit { color: var(--muted); opacity: 1; }

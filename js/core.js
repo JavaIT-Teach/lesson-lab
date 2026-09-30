@@ -254,6 +254,8 @@
     if (lesson.unit == null || String(lesson.unit).trim() === "") lp.push("Unit is missing.");
     if (isBlank(lesson.mainAim)) lp.push("Main aim is missing.");
     if (!Array.isArray(lesson.subAims)) lp.push("Sub-aims must be a list (it can be empty).");
+    // Optional lesson-level flag, normally set by the Hide control (an override), never by deleting files.
+    if (lesson.hidden !== undefined && typeof lesson.hidden !== "boolean") lp.push("hidden must be true or false.");
     if (!Array.isArray(lesson.stages) || lesson.stages.length === 0) {
       lp.push("Lesson has no stages.");
     } else {
