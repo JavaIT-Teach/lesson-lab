@@ -21,46 +21,223 @@ LL.registerLesson({
       id: "alphabet-board",
       title: "The alphabet",
       minutes: 6,
-      audioCue: "Listen: Track 3",
+      audioCue: "Listen: Track 1",
       mechanic: "reveal-board",
       data: {
         cue: "Listen and repeat.",
         items: [
-          { id: "a", label: "Aa", picture: "", group: "ei", blankable: false },
-          { id: "b", label: "Bb", picture: "", group: "ii", blankable: false },
-          { id: "c", label: "Cc", picture: "", group: "ii", blankable: true },
-          { id: "d", label: "Dd", picture: "", group: "ii", blankable: false },
-          { id: "e", label: "Ee", picture: "", group: "ii", blankable: false },
-          { id: "f", label: "Ff", picture: "", group: "e", blankable: true },
-          { id: "g", label: "Gg", picture: "", group: "ii", blankable: false },
-          { id: "h", label: "Hh", picture: "", group: "ei", blankable: true },
-          { id: "i", label: "Ii", picture: "", group: "ai", blankable: false },
-          { id: "j", label: "Jj", picture: "", group: "ei", blankable: true },
-          { id: "k", label: "Kk", picture: "", group: "ei", blankable: false },
-          { id: "l", label: "Ll", picture: "", group: "e", blankable: false },
-          { id: "m", label: "Mm", picture: "", group: "e", blankable: true },
-          { id: "n", label: "Nn", picture: "", group: "e", blankable: false },
-          { id: "o", label: "Oo", picture: "", group: "ou", blankable: false },
-          { id: "p", label: "Pp", picture: "", group: "ii", blankable: true },
-          { id: "q", label: "Qq", picture: "", group: "uu", blankable: false },
-          { id: "r", label: "Rr", picture: "", group: "aa", blankable: true },
-          { id: "s", label: "Ss", picture: "", group: "e", blankable: false },
-          { id: "t", label: "Tt", picture: "", group: "ii", blankable: false },
-          { id: "u", label: "Uu", picture: "", group: "uu", blankable: true },
-          { id: "v", label: "Vv", picture: "", group: "ii", blankable: false },
-          { id: "w", label: "Ww", picture: "", group: "uu", blankable: true },
-          { id: "x", label: "Xx", picture: "", group: "e", blankable: false },
-          { id: "y", label: "Yy", picture: "", group: "ai", blankable: true },
-          { id: "z", label: "Zz", picture: "", group: "e", blankable: false }
+          {
+            id: "a",
+            label: "Aa",
+            picture: "",
+            group: "ei",
+            blankable: false
+          },
+          {
+            id: "b",
+            label: "Bb",
+            picture: "",
+            group: "ii",
+            blankable: false
+          },
+          {
+            id: "c",
+            label: "Cc",
+            picture: "",
+            group: "ii",
+            blankable: true
+          },
+          {
+            id: "d",
+            label: "Dd",
+            picture: "",
+            group: "ii",
+            blankable: false
+          },
+          {
+            id: "e",
+            label: "Ee",
+            picture: "",
+            group: "ii",
+            blankable: false
+          },
+          {
+            id: "f",
+            label: "Ff",
+            picture: "",
+            group: "e",
+            blankable: true
+          },
+          {
+            id: "g",
+            label: "Gg",
+            picture: "",
+            group: "ii",
+            blankable: false
+          },
+          {
+            id: "h",
+            label: "Hh",
+            picture: "",
+            group: "ei",
+            blankable: true
+          },
+          {
+            id: "i",
+            label: "Ii",
+            picture: "",
+            group: "ai",
+            blankable: false
+          },
+          {
+            id: "j",
+            label: "Jj",
+            picture: "",
+            group: "ei",
+            blankable: true
+          },
+          {
+            id: "k",
+            label: "Kk",
+            picture: "",
+            group: "ei",
+            blankable: false
+          },
+          {
+            id: "l",
+            label: "Ll",
+            picture: "",
+            group: "e",
+            blankable: false
+          },
+          {
+            id: "m",
+            label: "Mm",
+            picture: "",
+            group: "e",
+            blankable: true
+          },
+          {
+            id: "n",
+            label: "Nn",
+            picture: "",
+            group: "e",
+            blankable: false
+          },
+          {
+            id: "o",
+            label: "Oo",
+            picture: "",
+            group: "ou",
+            blankable: false
+          },
+          {
+            id: "p",
+            label: "Pp",
+            picture: "",
+            group: "ii",
+            blankable: true
+          },
+          {
+            id: "q",
+            label: "Qq",
+            picture: "",
+            group: "uu",
+            blankable: false
+          },
+          {
+            id: "r",
+            label: "Rr",
+            picture: "",
+            group: "aa",
+            blankable: true
+          },
+          {
+            id: "s",
+            label: "Ss",
+            picture: "",
+            group: "e",
+            blankable: false
+          },
+          {
+            id: "t",
+            label: "Tt",
+            picture: "",
+            group: "ii",
+            blankable: false
+          },
+          {
+            id: "u",
+            label: "Uu",
+            picture: "",
+            group: "uu",
+            blankable: true
+          },
+          {
+            id: "v",
+            label: "Vv",
+            picture: "",
+            group: "ii",
+            blankable: false
+          },
+          {
+            id: "w",
+            label: "Ww",
+            picture: "",
+            group: "uu",
+            blankable: true
+          },
+          {
+            id: "x",
+            label: "Xx",
+            picture: "",
+            group: "e",
+            blankable: false
+          },
+          {
+            id: "y",
+            label: "Yy",
+            picture: "",
+            group: "ai",
+            blankable: true
+          },
+          {
+            id: "z",
+            label: "Zz",
+            picture: "",
+            group: "e",
+            blankable: false
+          }
         ],
         groups: [
-          { id: "ei", label: "/eɪ/  like 'say'" },
-          { id: "ii", label: "/iː/  like 'see'" },
-          { id: "e", label: "/e/  like 'yes'" },
-          { id: "ai", label: "/aɪ/  like 'my'" },
-          { id: "ou", label: "/əʊ/  like 'no'" },
-          { id: "uu", label: "/uː/  like 'you'" },
-          { id: "aa", label: "/ɑː/  like 'car'" }
+          {
+            id: "ei",
+            label: "/eɪ/  like 'say'"
+          },
+          {
+            id: "ii",
+            label: "/iː/  like 'see'"
+          },
+          {
+            id: "e",
+            label: "/e/  like 'yes'"
+          },
+          {
+            id: "ai",
+            label: "/aɪ/  like 'my'"
+          },
+          {
+            id: "ou",
+            label: "/əʊ/  like 'no'"
+          },
+          {
+            id: "uu",
+            label: "/uː/  like 'you'"
+          },
+          {
+            id: "aa",
+            label: "/ɑː/  like 'car'"
+          }
         ],
         blankCount: 5
       },
@@ -79,10 +256,34 @@ LL.registerLesson({
         mode: "step",
         commitCue: "Write it. Show your partner.",
         items: [
-          { id: "hello", prompt: "hello", answer: "H - E - L - L - O", picture: "assets/sample/wave.svg", pairCue: "A spells it. B writes it." },
-          { id: "name", prompt: "name", answer: "N - A - M - E", picture: "", pairCue: "B spells it. A writes it." },
-          { id: "from", prompt: "from", answer: "F - R - O - M", picture: "", pairCue: "" },
-          { id: "book", prompt: "book", answer: "B - O - O - K", picture: "", pairCue: "" }
+          {
+            id: "hello",
+            prompt: "hello",
+            answer: "H - E - L - L - O",
+            picture: "assets/sample/wave.svg",
+            pairCue: "A spells it. B writes it."
+          },
+          {
+            id: "name",
+            prompt: "name",
+            answer: "N - A - M - E",
+            picture: "",
+            pairCue: "B spells it. A writes it."
+          },
+          {
+            id: "from",
+            prompt: "from",
+            answer: "F - R - O - M",
+            picture: "",
+            pairCue: ""
+          },
+          {
+            id: "book",
+            prompt: "book",
+            answer: "B - O - O - K",
+            picture: "",
+            pairCue: ""
+          }
         ]
       },
       rationale: {
@@ -101,13 +302,41 @@ LL.registerLesson({
         frame: "A: Is your letter B?\nB: No, it isn't. / Yes, it is!",
         bankCue: "Pick one. Keep it secret!",
         bank: [
-          { id: "b", label: "B", picture: "" },
-          { id: "p", label: "P", picture: "" },
-          { id: "v", label: "V", picture: "" },
-          { id: "d", label: "D", picture: "" },
-          { id: "t", label: "T", picture: "" },
-          { id: "g", label: "G", picture: "" },
-          { id: "j", label: "J", picture: "" }
+          {
+            id: "b",
+            label: "B",
+            picture: ""
+          },
+          {
+            id: "p",
+            label: "P",
+            picture: ""
+          },
+          {
+            id: "v",
+            label: "V",
+            picture: ""
+          },
+          {
+            id: "d",
+            label: "D",
+            picture: ""
+          },
+          {
+            id: "t",
+            label: "T",
+            picture: ""
+          },
+          {
+            id: "g",
+            label: "G",
+            picture: ""
+          },
+          {
+            id: "j",
+            label: "J",
+            picture: ""
+          }
         ],
         rounds: 3,
         swapCue: "Find a new partner!",
@@ -128,24 +357,88 @@ LL.registerLesson({
       data: {
         instructions: "Listen. Cross out the letter you hear. Five crossed out: shout BINGO!",
         teams: [
-          { id: "team-a", name: "Team A", score: 0 },
-          { id: "team-b", name: "Team B", score: 0 }
+          {
+            id: "team-a",
+            name: "Team A",
+            score: 0
+          },
+          {
+            id: "team-b",
+            name: "Team B",
+            score: 0
+          }
         ],
         pool: [
-          { id: "b", label: "B", picture: "" },
-          { id: "c", label: "C", picture: "" },
-          { id: "d", label: "D", picture: "" },
-          { id: "e", label: "E", picture: "" },
-          { id: "g", label: "G", picture: "" },
-          { id: "p", label: "P", picture: "" },
-          { id: "t", label: "T", picture: "" },
-          { id: "v", label: "V", picture: "" },
-          { id: "a", label: "A", picture: "" },
-          { id: "h", label: "H", picture: "" },
-          { id: "j", label: "J", picture: "" },
-          { id: "k", label: "K", picture: "" },
-          { id: "i", label: "I", picture: "" },
-          { id: "y", label: "Y", picture: "" }
+          {
+            id: "b",
+            label: "B",
+            picture: ""
+          },
+          {
+            id: "c",
+            label: "C",
+            picture: ""
+          },
+          {
+            id: "d",
+            label: "D",
+            picture: ""
+          },
+          {
+            id: "e",
+            label: "E",
+            picture: ""
+          },
+          {
+            id: "g",
+            label: "G",
+            picture: ""
+          },
+          {
+            id: "p",
+            label: "P",
+            picture: ""
+          },
+          {
+            id: "t",
+            label: "T",
+            picture: ""
+          },
+          {
+            id: "v",
+            label: "V",
+            picture: ""
+          },
+          {
+            id: "a",
+            label: "A",
+            picture: ""
+          },
+          {
+            id: "h",
+            label: "H",
+            picture: ""
+          },
+          {
+            id: "j",
+            label: "J",
+            picture: ""
+          },
+          {
+            id: "k",
+            label: "K",
+            picture: ""
+          },
+          {
+            id: "i",
+            label: "I",
+            picture: ""
+          },
+          {
+            id: "y",
+            label: "Y",
+            picture: ""
+          }
         ],
         shuffle: true,
         studentCaller: ""

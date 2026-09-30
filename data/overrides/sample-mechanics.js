@@ -8,14 +8,7 @@ window.LL.overrides = window.LL.overrides || {};
 window.LL.overrides["sample-mechanics"] = {
   "lesson": "sample-mechanics",
   "format": 1,
-  "resetAt": 0,
-  "updatedAt": 1790675771965,
-  "entries": {
-    "stages[alphabet-board].audioCue": {
-      "op": "set",
-      "v": "Listen: Track 1",
-      "t": 1790675771965,
-      "by": "device-u4chzx"
-    }
-  }
+  "resetAt": 1790758208736,
+  "updatedAt": 1790758208736,
+  "entries": {}
 };
