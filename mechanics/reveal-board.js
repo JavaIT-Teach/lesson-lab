@@ -73,7 +73,8 @@
             label: { type: "string", required: true, label: "Label", help: "A letter, number or word. With a picture it is the caption." },
             picture: { type: "string", format: "image", label: "Picture", placeholder: "assets/…/file.svg", help: "Optional." },
             group: { type: "string", label: "Group", help: "Optional. The name (or id) of one of the Groups below." },
-            blankable: { type: "boolean", label: "Can be blanked in missing-item mode" }
+            blankable: { type: "boolean", label: "Can be blanked in missing-item mode" },
+            textColor: { type: "string", label: "Text colour", placeholder: "red  or  #e0201b", help: "Optional. A CSS colour for this label instead of the default ink (e.g. 'say the colour, not the word')." }
           }
         }
       },
@@ -98,6 +99,13 @@
         var used = data.items.some(function (it) { return groupIndex(groups, it.group) === i; });
         if (!used) p.push("Group “" + g.label + "” has no items.");
       });
+      // textColor must be a colour the browser understands (checked only where the browser can tell).
+      if (typeof window !== "undefined" && window.CSS && typeof window.CSS.supports === "function") {
+        data.items.forEach(function (it, i) {
+          if (it.textColor && !window.CSS.supports("color", it.textColor))
+            p.push("Item " + (i + 1) + " (“" + it.label + "”): text colour “" + it.textColor + "” is not a colour.");
+        });
+      }
       var n = Number(data.blankCount) || 0;
       if (n && n > eligible(data.items).length)
         p.push("How many to blank (" + n + ") is more than the items that can be blanked (" + eligible(data.items).length + ").");
@@ -120,13 +128,18 @@
       "  animation: rb-in 0.5s cubic-bezier(0.2, 1.3, 0.4, 1) both; }",
       ".rb-label { overflow-wrap: anywhere; text-align: center; }",
       ".rb-pic { width: 100%; flex: 1; min-height: 0; max-height: calc(40vh / var(--rb-rows)); object-fit: contain; }",
-      ".rb-has-pic .rb-label { font-size: 0.45em; }",
+      ".rb-has-pic .rb-label { font-size: clamp(0.9rem, min(12vh / var(--rb-rows), 15vw / var(--rb-cols)), 2.6rem); } /* captions: readable, not tied to the longest label */",
       ".rb-dim .rb-tile:not(.rb-hl) { opacity: 0.55; transform: scale(0.94); }",
       ".rb-tile.rb-hl { background: var(--accent); color: var(--accent-ink, #17122b); transform: scale(1.1) rotate(-2deg); z-index: 1;",
       "  box-shadow: 0 0 0 0.7vmin rgba(255,255,255,0.85), 0 1.4vmin 3vmin rgba(0,0,0,0.35); animation: rb-hl 0.5s cubic-bezier(0.2, 1.4, 0.4, 1); }",
       ".rb-tile.rb-blank { background: rgba(0,0,0,0.18); color: transparent; box-shadow: inset 0 0 0 0.5vmin var(--shape), 0 0.8vmin 0 rgba(0,0,0,0.15);",
       "  animation: rb-flip 0.45s ease both; }",
       ".rb-tile.rb-blank > * { visibility: hidden; }",
+      /* Coloured labels (textColor): a neutral tile and a dark outline keep every ink readable, white and yellow included;
+         the highlight never changes the tile colour, so it cannot hide or change the ink. */
+      ".rb-tile.rb-inked { background: #c9c9d1; }",
+      ".rb-inked .rb-label { -webkit-text-stroke: 0.035em #1d1435; paint-order: stroke fill; text-shadow: 0 0.04em 0 rgba(0,0,0,0.25); }",
+      ".rb-tile.rb-inked.rb-hl { background: #c9c9d1; box-shadow: 0 0 0 0.9vmin var(--accent), 0 1.4vmin 3vmin rgba(0,0,0,0.35); }",
       ".rb-tile.rb-hl, .rb-tile.rb-blank { animation-delay: 0s !important; } /* the entrance stagger must not delay live changes */",
       ".rb-tile.rb-blank::after { content: '?'; position: absolute; color: var(--ink); opacity: 0.75; }",
       ".rb-tile.rb-blank.rb-hl { background: var(--accent); }",
@@ -180,6 +193,10 @@
         }
         var label = h("span", { class: "rb-label" });
         ctx.bind(label, "items." + i + ".label", { placeholder: "Label" });
+        if (it.textColor) {
+          label.style.color = it.textColor;
+          tile.classList.add("rb-inked");
+        }
         tile.appendChild(label);
         if (!ctx.editing) tile.addEventListener("click", function () { clickTile(it.id); });
         grid.appendChild(tile);
