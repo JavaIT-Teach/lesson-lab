@@ -9,7 +9,7 @@ window.LL.overrides["starter-in-the-classroom"] = {
   "lesson": "starter-in-the-classroom",
   "format": 1,
   "resetAt": 0,
-  "updatedAt": 1790783469888,
+  "updatedAt": 1790783471054,
   "entries": {
     "stages[cheat-sheet-partner].textStyle": {
       "op": "set",
@@ -62,21 +62,8 @@ window.LL.overrides["starter-in-the-classroom"] = {
       "by": "device-u4chzx"
     },
     "stages": {
-      "op": "order",
-      "v": [
-        "cheat-sheet-partner",
-        "meet-classmates",
-        "numbers-1-20",
-        "birthday-cakes",
-        "how-old-are-you",
-        "bingo",
-        "days-order",
-        "days-spelling",
-        "classroom-objects",
-        "colours-ttt",
-        "colours-stroop"
-      ],
-      "t": 1790783469888,
+      "op": "none",
+      "t": 1790783471054,
       "by": "device-u4chzx"
     }
   }
