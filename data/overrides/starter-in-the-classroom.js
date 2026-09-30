@@ -9,12 +9,12 @@ window.LL.overrides["starter-in-the-classroom"] = {
   "lesson": "starter-in-the-classroom",
   "format": 1,
   "resetAt": 0,
-  "updatedAt": 1790770310390,
+  "updatedAt": 1790770325653,
   "entries": {
     "stages[meet-classmates].data.mission": {
       "op": "set",
-      "v": "Ask at least 3 classmates: \nWhat's your name? \n• How do you spell it? \n• How old are you? \n• Write their answers on Worksheet Part 2.",
-      "t": 1790770310390,
+      "v": "Ask at least 3 classmates: \nWhat's your name? \n1. How do you spell it? \n2. How old are you? \n3. Write their answers on Worksheet Part 2.",
+      "t": 1790770325653,
       "by": "device-u4chzx"
     }
   }
