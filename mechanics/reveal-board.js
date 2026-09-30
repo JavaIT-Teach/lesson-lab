@@ -12,6 +12,14 @@
   var LL = window.LL;
   var h = LL.ui.h;
 
+  /* textColor is one of nine colour words, each mapped to one fixed shade (the same as the colour swatches).
+     No free colour input: the teacher picks a word, the app owns the colour. */
+  var INK = {
+    black: "#141414", blue: "#1f5fd6", brown: "#7b4a1e", green: "#1f9a45", grey: "#8c8c8c",
+    orange: "#ff8a00", red: "#e0201b", white: "#ffffff", yellow: "#ffd400"
+  };
+  var INK_WORDS = Object.keys(INK);
+
   /* An item's group field may hold the group id or the group label (the edit form only shows labels). */
   function groupIndex(groups, ref) {
     if (!ref) return -1;
@@ -74,7 +82,7 @@
             picture: { type: "string", format: "image", label: "Picture", placeholder: "assets/…/file.svg", help: "Optional." },
             group: { type: "string", label: "Group", help: "Optional. The name (or id) of one of the Groups below." },
             blankable: { type: "boolean", label: "Can be blanked in missing-item mode" },
-            textColor: { type: "string", label: "Text colour", placeholder: "red  or  #e0201b", help: "Optional. A CSS colour for this label instead of the default ink (e.g. 'say the colour, not the word')." }
+            textColor: { type: "string", options: INK_WORDS, label: "Text colour", help: "Optional. Draws the label in this colour instead of the default ink (e.g. 'say the colour, not the word'). Only these nine colours." }
           }
         }
       },
@@ -99,13 +107,6 @@
         var used = data.items.some(function (it) { return groupIndex(groups, it.group) === i; });
         if (!used) p.push("Group “" + g.label + "” has no items.");
       });
-      // textColor must be a colour the browser understands (checked only where the browser can tell).
-      if (typeof window !== "undefined" && window.CSS && typeof window.CSS.supports === "function") {
-        data.items.forEach(function (it, i) {
-          if (it.textColor && !window.CSS.supports("color", it.textColor))
-            p.push("Item " + (i + 1) + " (“" + it.label + "”): text colour “" + it.textColor + "” is not a colour.");
-        });
-      }
       var n = Number(data.blankCount) || 0;
       if (n && n > eligible(data.items).length)
         p.push("How many to blank (" + n + ") is more than the items that can be blanked (" + eligible(data.items).length + ").");
@@ -193,8 +194,8 @@
         }
         var label = h("span", { class: "rb-label" });
         ctx.bind(label, "items." + i + ".label", { placeholder: "Label" });
-        if (it.textColor) {
-          label.style.color = it.textColor;
+        if (INK[it.textColor]) {
+          label.style.color = INK[it.textColor];
           tile.classList.add("rb-inked");
         }
         tile.appendChild(label);

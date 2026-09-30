@@ -130,7 +130,7 @@
 
   /* ---------- Schema validation ----------
    * Field spec: { type: "string"|"number"|"boolean"|"list"|"object",
-   *               required, label, help, multiline, min, max,
+   *               required, label, help, multiline, min, max, options (string: fixed choices),
    *               item (field spec, for list), fields (object of specs, for object) }
    */
   function validateField(spec, value, label, problems) {
@@ -142,6 +142,8 @@
     switch (spec.type) {
       case "string":
         if (typeof value !== "string") problems.push(label + " must be text.");
+        else if (Array.isArray(spec.options) && spec.options.indexOf(value) === -1)
+          problems.push(label + " must be one of: " + spec.options.join(", ") + " (it is “" + value + "”).");
         break;
       case "number":
         if (typeof value !== "number" || isNaN(value)) problems.push(label + " must be a number.");

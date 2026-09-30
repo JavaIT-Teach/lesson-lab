@@ -147,7 +147,9 @@ A mechanic is one file in `mechanics/`, registered with `LL.registerMechanic({..
 | `keys` (optional)         | `[[key, what it does], …]` for its in-stage keys. Shown in the `?` overlay ("This stage") and in teacher view. |
 | `validate(data)` (optional) | Extra checks the schema cannot express (e.g. references between its lists). Returns a list of plain-word problems; runs only after the schema passes; problems are shown like any other stage problem. |
 
-Schema field spec: `{ type: "string" | "number" | "boolean" | "list" | "object", required, label, help, placeholder, multiline, min, max, format, item (for list), itemLabel (for list), fields (for object), default }`.
+Schema field spec: `{ type: "string" | "number" | "boolean" | "list" | "object", required, label, help, placeholder, multiline, min, max, format, options, item (for list), itemLabel (for list), fields (for object), default }`.
+
+- `options` (string fields): a fixed list of allowed values. The edit form shows a chooser (with "—" for not set), never free text, and validation rejects any other value. Use it wherever a free value would be a style choice (e.g. `reveal-board`'s `textColor` = one of nine colour words; the mechanic maps each word to its own fixed colour).
 
 - A `list` must have `item: { type: "object", fields: {...} }` so every item can carry an id. The registry rejects a mechanic whose list holds plain values. New items get a generated id in edit mode.
 - Every list in the generic form gets a drag handle (⠿) automatically, plus ↑ ↓ ✕ buttons. Dragging changes array order only: ids never change, so overrides record an `order` edit and undo / sync work unchanged. A mechanic needs nothing extra for this.

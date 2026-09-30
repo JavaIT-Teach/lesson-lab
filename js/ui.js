@@ -61,7 +61,17 @@
       row.classList.toggle("invalid", !!spec.required && isBlank(v));
     }
 
-    if (spec.type === "string") {
+    if (spec.type === "string" && Array.isArray(spec.options)) {
+      // A fixed list of choices (e.g. a colour word). "—" = not set.
+      var sel = h("select", { class: "editable-outline" }, h("option", { value: "", text: "—" }),
+        spec.options.map(function (o) { return h("option", { value: o, text: o }); }));
+      sel.value = typeof value === "string" && spec.options.indexOf(value) !== -1 ? value : "";
+      sel.addEventListener("change", function () {
+        api.set(path, sel.value || undefined);
+        markValidity(sel.value);
+      });
+      row.appendChild(sel);
+    } else if (spec.type === "string") {
       var input = spec.multiline
         ? h("textarea", { rows: 3, class: "editable-outline" })
         : h("input", { type: "text", class: "editable-outline" });

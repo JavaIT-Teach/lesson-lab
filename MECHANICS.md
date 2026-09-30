@@ -59,16 +59,16 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
   | Field        | Type | Required | Notes |
   |--------------|------|----------|-------|
   | `cue`        | text | no  | One line above the board, e.g. "Listen and repeat." |
-  | `items`      | list | yes | Each item: `id`, `label` (required), `picture` (optional, `format: "image"`), `group` (optional: a group id or group name), `blankable` (true/false: may be blanked in missing-item mode), `textColor` (optional: a CSS colour, e.g. `red` or `#e0201b`). |
+  | `items`      | list | yes | Each item: `id`, `label` (required), `picture` (optional, `format: "image"`), `group` (optional: a group id or group name), `blankable` (true/false: may be blanked in missing-item mode), `textColor` (optional: one of the nine colour words `black blue brown green grey orange red white yellow`, chosen from a list — no free colour). |
   | `groups`     | list | no  | Each: `id`, `label` (e.g. "/eɪ/ like 'say'"). Used for chorus-by-group stepping (G). |
   | `blankCount` | number | no | Empty/0 = blank every `blankable` item. A number = that many, picked at random from the `blankable` items; V picks again. If no item is marked `blankable`, all items are eligible. |
 
-  `textColor` draws that item's label in the given colour instead of the default ink. The tile turns neutral grey with a dark outline on the letters, so every ink stays readable (white and yellow included), and the highlight never changes the tile colour. Items without it look as before. Built for "say the colour, not the word".
+  `textColor` draws that item's label in the colour named by the word. Each word maps to one fixed shade inside the mechanic (the same shades as the Starter lesson's colour swatches), so the teacher chooses *which* colour word, never a colour value. The tile turns neutral grey with a dark outline on the letters, so every ink stays readable (white and yellow included), and the highlight never changes the tile colour. Items without it look as before. Built for "say the colour, not the word".
 
   With a picture, the label is a caption sized to the grid (readable from the back), not to the longest label.
 
   Eligibility is authored as a `blankable` flag on each item rather than a separate list of item ids: it cannot point at a missing item, and in edit mode it is one checkbox per item. The ON/OFF state and the current blank set are live state, not data.
-- **Extra validation (`validate`):** an item's `group` must match a group id or name; every group must have at least one item; `blankCount` cannot exceed the eligible items; `textColor` must be a colour the browser understands (checked in the browser).
+- **Extra validation (`validate`):** an item's `group` must match a group id or name; every group must have at least one item; `blankCount` cannot exceed the eligible items; `textColor` must be one of the nine colour words (checked by the schema `options`).
 - **How it keeps every student speaking:** The teacher sets pace and grouping live: the whole class choruses the highlighted item or group together, or pairs name the blanked items before the class says them. It only keeps everyone talking if the stage's rationale plans choral or paired production around it.
 - **In-stage keys:** `N` / `B` highlight next / previous item · `G` highlight next group (after the last group: off) · `O` clear highlight · `M` missing-item mode on/off · `V` blank a new random set (and turn missing-item mode on) · click an item: highlight it, or in missing-item mode blank / unblank it.
 - **Lists / item ids:** `items[].id`, `groups[].id` (both drag-reorderable in edit mode; grid order follows `items`). Live state refers to these ids; deleted ids drop out.

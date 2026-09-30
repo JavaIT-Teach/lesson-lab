@@ -303,15 +303,15 @@ LL.registerLesson({
       data: {
         cue: "Say the COLOUR, not the word!",
         items: [
-          { id: "black", label: "BLACK", picture: "", group: "", blankable: false, textColor: "#ffd400" } /* ink: yellow */,
-          { id: "blue", label: "BLUE", picture: "", group: "", blankable: false, textColor: "#e0201b" } /* ink: red */,
-          { id: "brown", label: "BROWN", picture: "", group: "", blankable: false, textColor: "#8c8c8c" } /* ink: grey */,
-          { id: "green", label: "GREEN", picture: "", group: "", blankable: false, textColor: "#ff8a00" } /* ink: orange */,
-          { id: "grey", label: "GREY", picture: "", group: "", blankable: false, textColor: "#7b4a1e" } /* ink: brown */,
-          { id: "orange", label: "ORANGE", picture: "", group: "", blankable: false, textColor: "#141414" } /* ink: black */,
-          { id: "red", label: "RED", picture: "", group: "", blankable: false, textColor: "#1f9a45" } /* ink: green */,
-          { id: "white", label: "WHITE", picture: "", group: "", blankable: false, textColor: "#1f5fd6" } /* ink: blue */,
-          { id: "yellow", label: "YELLOW", picture: "", group: "", blankable: false, textColor: "#ffffff" } /* ink: white */
+          { id: "black", label: "BLACK", picture: "", group: "", blankable: false, textColor: "yellow" },
+          { id: "blue", label: "BLUE", picture: "", group: "", blankable: false, textColor: "red" },
+          { id: "brown", label: "BROWN", picture: "", group: "", blankable: false, textColor: "grey" },
+          { id: "green", label: "GREEN", picture: "", group: "", blankable: false, textColor: "orange" },
+          { id: "grey", label: "GREY", picture: "", group: "", blankable: false, textColor: "brown" },
+          { id: "orange", label: "ORANGE", picture: "", group: "", blankable: false, textColor: "black" },
+          { id: "red", label: "RED", picture: "", group: "", blankable: false, textColor: "green" },
+          { id: "white", label: "WHITE", picture: "", group: "", blankable: false, textColor: "blue" },
+          { id: "yellow", label: "YELLOW", picture: "", group: "", blankable: false, textColor: "white" }
         ],
         groups: [],
         blankCount: 0
