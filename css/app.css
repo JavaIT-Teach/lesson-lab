@@ -15,6 +15,11 @@
   --rail-w: 210px;
   --panel-w: 400px;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Curated colour roles (LL.COLOR_ROLES): constant across every stage/palette, unlike --accent. */
+  --highlight: #ffe066;
+  --highlight-ink: #1a1400;
+  --paper: #fff;
+  --paper-ink: #17122b;
 }
 
 * { box-sizing: border-box; }
@@ -564,6 +569,8 @@ kbd {
 .size-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.4rem; }
 .size-row input[type="range"] { flex: 1; }
 .size-row .size-val { min-width: 3ch; text-align: right; font-weight: 800; font-size: 0.85rem; color: var(--muted); }
+.deco-swatch-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
+.deco-swatch-row .deco-swatch { width: 28px; height: 28px; }
 
 /* Drag handles (edit mode): rail stages and schema lists */
 .grip { flex: none; cursor: grab; user-select: none; touch-action: none; color: var(--muted); font-size: 1.1rem; line-height: 1; padding: 0.3rem 0.15rem; border-radius: 6px; }
@@ -631,25 +638,47 @@ kbd {
 .editable:empty::before { content: attr(data-placeholder); opacity: 0.5; font-style: italic; }
 .editing .scene-bg { animation-play-state: paused; }
 
-/* ---------- Decorations (shapes): colour always from the scene palette, never stored ---------- */
+/* A text field the teacher has dragged: freed from the mechanic's normal layout, positioned like a shape. */
+.scene-freepos { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.scene-freepos > * { position: absolute; transform: translate(-50%, -50%); max-width: 80%; pointer-events: auto; margin: 0; }
+.editing .scene-freepos { z-index: 2; }
+
+/* Drag handles: shown on every bound text field in edit mode, over the scene content (grabbing the
+   handle moves the text; the text itself stays click-to-edit, so dragging never fights text selection). */
+.scene-drag-handles { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
+.drag-handle {
+  position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 7px;
+  background: #1a1400; color: #fff; border: 2px solid #fff; padding: 0; cursor: move;
+  display: flex; align-items: center; justify-content: center; pointer-events: auto; touch-action: none;
+}
+.drag-handle svg { width: 14px; height: 14px; }
+.drag-reset {
+  position: absolute; width: 20px; height: 20px; margin: -34px 0 0 -10px; border-radius: 50%; border: 0;
+  background: #1a1400; color: #fff; font-size: 11px; line-height: 20px; padding: 0; pointer-events: auto; cursor: pointer;
+}
+
+/* ---------- Decorations (shapes): colour is either automatic (the scene accent) or one of the
+   curated roles below — never an open picker. z: "back" (default, behind content) or "front". ---------- */
 .scene-decor { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.scene-decor-front { z-index: 2; }
 .deco {
   --deco-w: 14; --deco-h: 14;
   position: absolute; width: calc(var(--deco-w) * 1vmin); height: calc(var(--deco-h) * 1vmin);
   transform: translate(-50%, -50%); display: flex; align-items: center; justify-content: center;
   animation: deco-bob 6s ease-in-out infinite;
 }
-.deco-fill { position: absolute; inset: 0; background: var(--accent); box-shadow: 0 0.8vmin 0 rgba(0, 0, 0, 0.18); }
+.deco-fill { position: absolute; inset: 0; background: var(--deco-fill, var(--accent)); box-shadow: 0 0.8vmin 0 rgba(0, 0, 0, 0.18); }
 .deco-circle .deco-fill { border-radius: 50%; }
 .deco-rectangle .deco-fill { border-radius: 1.6vmin; }
 .deco-triangle .deco-fill { clip-path: polygon(50% 2%, 98% 96%, 2% 96%); box-shadow: none; filter: drop-shadow(0 0.8vmin 0 rgba(0, 0, 0, 0.18)); }
 .deco-label {
   position: relative; max-width: 90%; text-align: center; overflow-wrap: anywhere;
-  color: var(--accent-ink, #17122b); font-weight: 900; font-size: clamp(1rem, 2vw, 2.2rem); line-height: 1.05;
+  color: var(--deco-label-ink, var(--accent-ink, #17122b)); font-weight: 900; font-size: clamp(1rem, 2vw, 2.2rem); line-height: 1.05;
 }
 .deco-triangle .deco-label { margin-top: 28%; max-width: 60%; }
 @keyframes deco-bob { 0%, 100% { translate: 0 0; } 50% { translate: 0 -1.2vmin; } }
-.editing .scene-decor { z-index: 3; }
+.editing .scene-decor, .editing .scene-decor-front { z-index: 3; }
+.editing .scene-decor-front { z-index: 4; }
 .editing .deco { pointer-events: auto; cursor: move; animation: none; touch-action: none; }
 .editing .deco:focus { outline: 3px solid #fff; outline-offset: 6px; }
 .editing .deco.moving { opacity: 0.85; }
@@ -658,6 +687,16 @@ kbd {
 .editing .deco:hover .deco-del, .editing .deco:focus-within .deco-del, .editing .deco:focus .deco-del,
 .editing .deco:hover .deco-handle, .editing .deco:focus-within .deco-handle, .editing .deco:focus .deco-handle { display: block; }
 .deco-del { top: -12px; right: -12px; width: 26px; height: 26px; border-radius: 50%; border: 0; background: #1a1400; color: #fff; font-size: 13px; line-height: 26px; padding: 0; z-index: 3; }
+.deco-tools {
+  position: absolute; left: 50%; top: -50px; transform: translateX(-50%); z-index: 3;
+  display: none; align-items: center; gap: 5px; padding: 5px; border-radius: 10px; background: rgba(10, 8, 20, 0.75);
+}
+.editing .deco:hover .deco-tools, .editing .deco:focus-within .deco-tools, .editing .deco:focus .deco-tools { display: flex; }
+.deco-swatch { width: 20px; height: 20px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.55); padding: 0; cursor: pointer; background: var(--sw, var(--accent)); }
+.deco-swatch.active { border-color: #fff; box-shadow: 0 0 0 2px #1a1400; }
+.deco-swatch-auto { background: repeating-linear-gradient(45deg, #fff, #fff 3px, #999 3px, #999 6px); }
+.deco-front-toggle { width: 22px; height: 22px; border-radius: 6px; border: 0; background: #33305a; color: #fff; font-size: 11px; font-weight: 900; padding: 0; cursor: pointer; }
+.deco-front-toggle.active { background: var(--edit); color: #1a1400; }
 .deco-handle { width: 14px; height: 14px; border-radius: 4px; background: #fff; border: 3px solid #1a1400; padding: 0; }
 .deco-handle-nw { left: -7px; top: -7px; cursor: nwse-resize; }
 .deco-handle-ne { right: -7px; top: -7px; cursor: nesw-resize; }

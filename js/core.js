@@ -247,8 +247,18 @@
   LL.SHAPES = ["circle", "rectangle", "triangle"];
   LL.DECO_MIN = 4;
   LL.DECO_MAX = 70;
+  LL.DECO_Z = ["back", "front"];
 
-  /* decorations: [{ id, shape, x, y, w, h, label? }]; x / y = centre in % of the scene, w / h independent size in vmin. */
+  /* ---------- Curated colour roles ----------
+   * Never an open colour picker: a fixed, small set of roles, each mapped to a fixed CSS value
+   * (see css/app.css). "accent" follows the lesson's own generated palette; "highlight" and
+   * "paper" are constant across every stage, for things (like a highlighter) that must not
+   * change colour with the theme. Used by both decorations (fill) and textStyle (text colour).
+   */
+  LL.COLOR_ROLES = ["accent", "highlight", "paper"];
+
+  /* decorations: [{ id, shape, x, y, w, h, label?, color?, z? }];
+     x / y = centre in % of the scene, w / h independent size in vmin. */
   function decorationProblems(list) {
     var p = [];
     if (list === undefined) return p;
@@ -266,16 +276,23 @@
       });
       if (d.label !== undefined && typeof d.label !== "string") p.push(at + ": label must be text.");
       else if (d.label && d.label.length > 40) p.push(at + ": label is longer than 40 characters — keep it short.");
+      if (d.color !== undefined && LL.COLOR_ROLES.indexOf(d.color) === -1)
+        p.push(at + ": colour must be one of: " + LL.COLOR_ROLES.join(", ") + " (or left out for automatic).");
+      if (d.z !== undefined && LL.DECO_Z.indexOf(d.z) === -1)
+        p.push(at + ": z must be one of: " + LL.DECO_Z.join(", ") + " (or left out — same as \"back\").");
       Object.keys(d).forEach(function (k) {
-        if (["id", "shape", "x", "y", "w", "h", "label"].indexOf(k) === -1) p.push(at + ": “" + k + "” is not allowed (no colour: the app chooses it).");
+        if (["id", "shape", "x", "y", "w", "h", "label", "color", "z"].indexOf(k) === -1) p.push(at + ": “" + k + "” is not allowed.");
       });
     });
     return p;
   }
 
   /* ---------- Per-field text style overrides ----------
-   * stage.textStyle: { "<field path under the stage>": { align?, size? } }
-   * Layout only — never colour or font. Applied to any bound text field (title, data.*, decoration labels…).
+   * stage.textStyle: { "<field path under the stage>": { align?, size?, color?, x?, y? } }
+   * Layout and a curated colour choice — never an open colour picker, never font.
+   * Applied to any bound text field (title, data.*, decoration labels…).
+   * x / y (both present together, % of the scene): frees the field from the mechanic's normal
+   * layout and positions it absolutely, like a shape. Leave both out to keep the mechanic's layout.
    */
   LL.TEXT_ALIGNS = ["left", "center", "right"];
   LL.TEXT_SIZE_MIN = 0.6;
@@ -293,8 +310,15 @@
         p.push(at + ".align must be one of: " + LL.TEXT_ALIGNS.join(", ") + ".");
       if (v.size !== undefined && (typeof v.size !== "number" || isNaN(v.size) || v.size < LL.TEXT_SIZE_MIN || v.size > LL.TEXT_SIZE_MAX))
         p.push(at + ".size must be a number from " + LL.TEXT_SIZE_MIN + " to " + LL.TEXT_SIZE_MAX + ".");
+      if (v.color !== undefined && LL.COLOR_ROLES.indexOf(v.color) === -1)
+        p.push(at + ".color must be one of: " + LL.COLOR_ROLES.join(", ") + " (or left out for automatic).");
+      if ((v.x !== undefined) !== (v.y !== undefined)) p.push(at + ": x and y must be given together (or both left out).");
+      ["x", "y"].forEach(function (k2) {
+        if (v[k2] !== undefined && (typeof v[k2] !== "number" || isNaN(v[k2]) || v[k2] < 0 || v[k2] > 100))
+          p.push(at + "." + k2 + " must be a number from 0 to 100.");
+      });
       Object.keys(v).forEach(function (fk) {
-        if (["align", "size"].indexOf(fk) === -1) p.push(at + ": \"" + fk + "\" is not allowed (no colour or font, only align/size).");
+        if (["align", "size", "color", "x", "y"].indexOf(fk) === -1) p.push(at + ": \"" + fk + "\" is not allowed (no font, only align/size/color/position).");
       });
     });
     return p;

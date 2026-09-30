@@ -539,7 +539,8 @@
     var bg = h("div", { class: "scene-bg", "aria-hidden": "true" });
     for (var i = 0; i < 6; i++) bg.appendChild(h("i"));
     scene.appendChild(bg);
-    if (st && Array.isArray(st.decorations) && st.decorations.length) scene.appendChild(decorLayer(st));
+    var decor = st && Array.isArray(st.decorations) && st.decorations.length ? decorLayers(st) : null;
+    if (decor) scene.appendChild(decor.back);
 
     var content = h("div", { class: "scene-content" });
 
@@ -572,6 +573,8 @@
       }
     }
     scene.appendChild(content);
+    if (decor) scene.appendChild(decor.front);
+    if (st) applyFreePositions(scene, st);
 
     var old = el.stageWrap.querySelectorAll(".scene");
     Array.prototype.forEach.call(old, function (o) {
@@ -580,6 +583,8 @@
       setTimeout(function () { o.remove(); }, 600);
     });
     el.stageWrap.insertBefore(scene, el.stageWrap.firstChild);
+    // Needs real layout (getBoundingClientRect), so only after the scene is actually in the document.
+    if (st && S.editing) attachDragHandles(scene, content);
   }
 
   /* ---------- Decorations (shapes) ----------
@@ -592,15 +597,28 @@
     sw: { left: 1, bottom: 1 }, w: { left: 1 }
   };
 
-  function decorLayer(st) {
-    var layer = h("div", { class: "scene-decor", "aria-hidden": S.editing ? null : "true" });
+  // role -> { fill, ink } CSS values, from LL.COLOR_ROLES. Never arbitrary colour: a fixed lookup.
+  var COLOR_ROLE_CSS = {
+    accent: { fill: "var(--accent)", ink: "var(--accent-ink, #17122b)" },
+    highlight: { fill: "var(--highlight)", ink: "var(--highlight-ink)" },
+    paper: { fill: "var(--paper)", ink: "var(--paper-ink)" }
+  };
+
+  function decorLayers(st) {
+    var back = h("div", { class: "scene-decor", "aria-hidden": S.editing ? null : "true" });
+    var front = h("div", { class: "scene-decor scene-decor-front", "aria-hidden": S.editing ? null : "true" });
     st.decorations.forEach(function (d, j) {
       if (!d || LL.SHAPES.indexOf(d.shape) === -1) return;
+      var layer = d.z === "front" ? front : back;
       var node = h("div", { class: "deco deco-" + d.shape, "data-id": d.id });
       node.style.left = d.x + "%";
       node.style.top = d.y + "%";
       node.style.setProperty("--deco-w", d.w);
       node.style.setProperty("--deco-h", d.h);
+      if (d.color && COLOR_ROLE_CSS[d.color]) {
+        node.style.setProperty("--deco-fill", COLOR_ROLE_CSS[d.color].fill);
+        node.style.setProperty("--deco-label-ink", COLOR_ROLE_CSS[d.color].ink);
+      }
       node.style.animationDelay = -(hash(String(d.id)) % 6000) + "ms";
       node.appendChild(h("div", { class: "deco-fill" }));
       if (d.label || S.editing) {
@@ -615,11 +633,38 @@
         Object.keys(DECO_HANDLES).forEach(function (dir) {
           node.appendChild(h("span", { class: "deco-handle deco-handle-" + dir, "data-handle": dir, title: "Drag to resize", "aria-hidden": "true" }));
         });
+        node.appendChild(decoTools(d));
         wireDecoration(node, layer, d);
       }
       layer.appendChild(node);
     });
-    return layer;
+    return { back: back, front: front };
+  }
+
+  // Colour swatches (curated roles + auto) and a front/back toggle, shown above a shape on hover/focus.
+  function decoTools(d) {
+    var box = h("div", { class: "deco-tools" });
+    box.appendChild(h("button", {
+      type: "button", class: "deco-swatch deco-swatch-auto" + (!d.color ? " active" : ""),
+      title: "Automatic colour", "aria-label": "Automatic colour",
+      onclick: function (e) { e.stopPropagation(); updateDecoration(d.id, { color: undefined }); }
+    }));
+    LL.COLOR_ROLES.forEach(function (role) {
+      var btn = h("button", {
+        type: "button", class: "deco-swatch" + (d.color === role ? " active" : ""),
+        title: role, "aria-label": role + " colour",
+        onclick: function (e) { e.stopPropagation(); updateDecoration(d.id, { color: role }); }
+      });
+      btn.style.setProperty("--sw", COLOR_ROLE_CSS[role].fill);
+      box.appendChild(btn);
+    });
+    box.appendChild(h("button", {
+      type: "button", class: "deco-front-toggle" + (d.z === "front" ? " active" : ""),
+      title: d.z === "front" ? "In front of the stage content — click to send it behind" : "Behind the stage content — click to bring it in front",
+      "aria-label": "Toggle front / back",
+      onclick: function (e) { e.stopPropagation(); updateDecoration(d.id, { z: d.z === "front" ? undefined : "front" }); }
+    }, d.z === "front" ? "▲" : "▼"));
+    return box;
   }
 
   function wireDecoration(node, layer, d) {
@@ -716,7 +761,12 @@
   function updateDecoration(id, patch) {
     mutate("deco:" + id + ":" + Object.keys(patch).join(","), function (l) {
       var i = decoIndex(l, id);
-      if (i !== -1) Object.keys(patch).forEach(function (k) { l.stages[S.stage].decorations[i][k] = patch[k]; });
+      if (i === -1) return;
+      var d = l.stages[S.stage].decorations[i];
+      Object.keys(patch).forEach(function (k) {
+        if (patch[k] === undefined) delete d[k];
+        else d[k] = patch[k];
+      });
     });
     focusDecoration(id);
   }
@@ -789,13 +839,15 @@
     return path.slice(2).join(".");
   }
 
-  /* Apply any teacher-set alignment / size override for this field. Layout only — never colour or font. */
+  /* Apply any teacher-set alignment / size / colour override for this field. Never font; position
+     (x/y) is handled separately, after render, by applyFreePositions (it moves the node itself). */
   function applyTextStyle(node, path) {
     if (path[0] !== "stages") return;
     var st = S.lesson.stages[path[1]];
     var ts = st && st.textStyle && st.textStyle[textStyleKey(path)];
     node.style.textAlign = ts && ts.align ? ts.align : "";
     node.style.fontSize = ts && ts.size ? ts.size + "em" : "";
+    node.style.color = ts && ts.color && COLOR_ROLE_CSS[ts.color] ? COLOR_ROLE_CSS[ts.color].fill : "";
   }
 
   /* Show text from the lesson at `path`; in edit mode make it editable in place. */
@@ -803,6 +855,8 @@
     opts = opts || {};
     var v = LL.getAt(S.lesson, path);
     node.textContent = v == null ? "" : String(v);
+    // Findable in both views (not just editing): a dragged field's position must still apply on the real scene.
+    node.setAttribute("data-ll-key", textStyleKey(path));
     applyTextStyle(node, path);
     if (!S.editing) return;
     node.classList.add("editable");
@@ -833,6 +887,127 @@
       // control out from under the very click causing this blur. refreshPanelProblems() only rebuilds
       // the toolbar's own buttons (for the "!" badges), leaving an open popover alone.
       refreshPanelProblems();
+    });
+  }
+
+  /* ---------- Free position (drag) for any bound text field ----------
+   * Opt-in, per field, stored as x/y (% of the scene) in the same stage.textStyle entry as
+   * align/size/color. Unset = the mechanic's own layout, exactly as before. Once set, the field is
+   * reparented into .scene-freepos and positioned like a shape (see applyFreePositions).
+   */
+
+  /* After the mechanic has rendered, move any field with a stored position into the freeform layer. */
+  function applyFreePositions(scene, st) {
+    var ts = st && st.textStyle;
+    if (!ts) return;
+    var overlay = null;
+    Object.keys(ts).forEach(function (key) {
+      var v = ts[key];
+      if (v.x === undefined || v.y === undefined) return;
+      var node = scene.querySelector('[data-ll-key="' + key + '"]');
+      if (!node) return; // the field isn't on screen this render (e.g. an optional field left empty)
+      if (!overlay) overlay = scene.querySelector(".scene-freepos") || scene.appendChild(h("div", { class: "scene-freepos" }));
+      node.style.left = v.x + "%";
+      node.style.top = v.y + "%";
+      overlay.appendChild(node);
+    });
+  }
+
+  /* Edit mode only: a small drag handle over every bound text field (shape labels excluded — they
+     already move with their shape), plus a reset button on a field that already has a free position. */
+  function attachDragHandles(scene, content) {
+    var old = scene.querySelector(".scene-drag-handles");
+    if (old) old.remove();
+    var overlay = h("div", { class: "scene-drag-handles" });
+    scene.appendChild(overlay);
+    var sceneBox = scene.getBoundingClientRect();
+    var nodes = scene.querySelectorAll(".editable[data-ll-key]");
+    Array.prototype.forEach.call(nodes, function (node) {
+      if (node.closest(".deco")) return;
+      var key = node.getAttribute("data-ll-key");
+      var r = node.getBoundingClientRect();
+      var cx = r.left + r.width / 2 - sceneBox.left;
+      var cy = r.top - sceneBox.top;
+      var handle = h("button", { type: "button", class: "drag-handle", title: "Drag to move this text", "aria-label": "Drag to move this text" });
+      handle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M12 2v20 M2 12h20 M6 6l-4 6 4 6 M18 6l4 6-4 6 M6 18l6 4 6-4 M6 6l6-4 6 4"/></svg>';
+      handle.style.left = cx + "px";
+      handle.style.top = cy + "px";
+      overlay.appendChild(handle);
+      wireTextDrag(handle, node, scene, key);
+      if (node.parentElement && node.parentElement.classList.contains("scene-freepos")) {
+        var reset = h("button", {
+          type: "button", class: "drag-reset", title: "Reset position", "aria-label": "Reset position",
+          onclick: function () { clearTextPosition(key); }
+        }, "⤺");
+        reset.style.left = cx + "px";
+        reset.style.top = cy + "px";
+        overlay.appendChild(reset);
+      }
+    });
+  }
+
+  function wireTextDrag(handle, node, scene, key) {
+    handle.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      var sceneBox = scene.getBoundingClientRect();
+      var start = { x: e.clientX, y: e.clientY };
+      var moved = false;
+      var pos = { x: 0, y: 0 };
+      function toPercent(ev) {
+        return {
+          x: Math.round(Math.max(0, Math.min(100, ((ev.clientX - sceneBox.left) / sceneBox.width) * 100)) * 10) / 10,
+          y: Math.round(Math.max(0, Math.min(100, ((ev.clientY - sceneBox.top) / sceneBox.height) * 100)) * 10) / 10
+        };
+      }
+      function move(ev) {
+        if (!moved && Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) < 5) return;
+        if (!moved) {
+          moved = true;
+          try { handle.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+          if (!(node.parentElement && node.parentElement.classList.contains("scene-freepos"))) {
+            var overlay = scene.querySelector(".scene-freepos") || scene.appendChild(h("div", { class: "scene-freepos" }));
+            overlay.appendChild(node);
+          }
+        }
+        pos = toPercent(ev);
+        node.style.left = pos.x + "%";
+        node.style.top = pos.y + "%";
+        handle.style.left = (ev.clientX - sceneBox.left) + "px";
+        handle.style.top = (ev.clientY - sceneBox.top) + "px";
+      }
+      function up() {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+        document.removeEventListener("pointercancel", up);
+        if (!moved) return;
+        setTextPosition(key, pos.x, pos.y);
+      }
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
+      document.addEventListener("pointercancel", up);
+    });
+  }
+
+  function setTextPosition(key, x, y) {
+    mutate("textpos:" + key, function (l) {
+      var st = l.stages[S.stage];
+      var ts = st.textStyle || (st.textStyle = {});
+      ts[key] = Object.assign({}, ts[key], { x: x, y: y });
+    });
+  }
+
+  function clearTextPosition(key) {
+    mutate("textpos:" + key, function (l) {
+      var st = l.stages[S.stage];
+      if (!st.textStyle || !st.textStyle[key]) return;
+      var entry = Object.assign({}, st.textStyle[key]);
+      delete entry.x;
+      delete entry.y;
+      if (Object.keys(entry).length) st.textStyle[key] = entry;
+      else delete st.textStyle[key];
+      if (!Object.keys(st.textStyle).length) delete st.textStyle;
     });
   }
 
@@ -1239,6 +1414,7 @@
     numbers: '<path d="M4 5h2v5 M4 10h3 M4 14.5a1.5 1.5 0 1 1 2.6 1L4 19h3.2 M10 7h10 M10 12h10 M10 17h10"/>',
     align: '<path d="M4 6h16 M4 11h10 M4 16h16 M4 21h10"/>',
     textsize: '<path d="M4 19L9 5l5 14 M5.4 14.5h7.2"/><path d="M16 19l2.6-7 2.6 7 M16.6 17h4"/>',
+    textcolor: '<path d="M4 20h16"/><path d="M6.5 16L11 4h2l4.5 12"/><path d="M8 12h8"/>',
     shape: '<circle cx="7.5" cy="8" r="3.5"/><path d="M16.5 4l4 7h-8z"/><rect x="10" y="14" width="10" height="6" rx="1"/>',
     stage: '<circle cx="12" cy="13" r="7"/><path d="M12 9v4l3 2 M9 3h6"/>',
     why: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="0.8" fill="currentColor"/>',
@@ -1319,7 +1495,8 @@
       tbBtn("bullets", "Bulleted list: click in a text, then here (Ctrl+Shift+8)", function () { listFormat("bullet"); }, { keepFocus: true }),
       tbBtn("numbers", "Numbered list: click in a text, then here (Ctrl+Shift+7)", function () { listFormat("number"); }, { keepFocus: true }),
       tbBtn("align", "Text align: click in a text, then here", function () { togglePop("align"); }, { pop: "align", keepFocus: true }),
-      tbBtn("textsize", "Text size: click in a text, then here", function () { togglePop("textsize"); }, { pop: "textsize", keepFocus: true })
+      tbBtn("textsize", "Text size: click in a text, then here", function () { togglePop("textsize"); }, { pop: "textsize", keepFocus: true }),
+      tbBtn("textcolor", "Text colour: click in a text, then here", function () { togglePop("textcolor"); }, { pop: "textcolor", keepFocus: true })
     ));
     el.toolbar.appendChild(h("div", { class: "tb-group" },
       tbBtn("shape", "Insert a shape", function () { togglePop("shape"); }, { pop: "shape" })
@@ -1427,6 +1604,26 @@
         return h("div", { class: "pop-body" },
           h("div", { class: "size-row" }, slider, val),
           h("button", { type: "button", class: "btn", onclick: function () { setTextStyle({ size: undefined }); } }, "Reset to auto"),
+          h("p", { class: "field-help", text: cur ? "Applies to the text you last clicked on the stage." : "Click a text on the stage first, then choose here." })
+        );
+      }
+    },
+    textcolor: {
+      title: "Text colour",
+      build: function () {
+        var cur = currentStyleEntry();
+        var active = cur ? cur.value.color : null;
+        function swatch(role, label) {
+          var btn = h("button", {
+            type: "button", class: "deco-swatch" + (!role ? " deco-swatch-auto" : "") + (active === role ? " active" : ""),
+            title: label, "aria-label": label,
+            onclick: function () { setTextStyle({ color: role }); }
+          });
+          if (role) btn.style.setProperty("--sw", COLOR_ROLE_CSS[role].fill);
+          return btn;
+        }
+        return h("div", { class: "pop-body" },
+          h("div", { class: "deco-swatch-row" }, swatch(null, "Auto (stage ink)"), LL.COLOR_ROLES.map(function (role) { return swatch(role, role); })),
           h("p", { class: "field-help", text: cur ? "Applies to the text you last clicked on the stage." : "Click a text on the stage first, then choose here." })
         );
       }
