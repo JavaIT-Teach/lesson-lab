@@ -9,7 +9,7 @@ window.LL.overrides["starter-in-the-classroom"] = {
   "lesson": "starter-in-the-classroom",
   "format": 1,
   "resetAt": 0,
-  "updatedAt": 1790778127130,
+  "updatedAt": 1790778168233,
   "entries": {
     "stages[cheat-sheet-partner].textStyle": {
       "op": "set",
@@ -24,8 +24,8 @@ window.LL.overrides["starter-in-the-classroom"] = {
     },
     "stages[meet-classmates].data.mission": {
       "op": "set",
-      "v": "Ask at least 3 classmates: \nWhat's your name? \n1. How do you spell it? \n2. How old are you? \n3. Write their answers on Worksheet Part 2.",
-      "t": 1790770325653,
+      "v": "Ask at least 3 classmates: \n1.What's your name? \n2. How do you spell it? \n3. How old are you? \n. Write their answers on Worksheet Part 2.",
+      "t": 1790778168233,
       "by": "device-u4chzx"
     },
     "stages[meet-classmates].decorations": {
