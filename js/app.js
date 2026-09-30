@@ -588,8 +588,8 @@
   }
 
   /* ---------- Decorations (shapes) ----------
-   * Colour is never stored or chosen: shapes use the scene's palette variables
-   * (--accent / --accent-ink), which come from the same hash of the stage id as the background.
+   * Colour is automatic (the scene's --accent / --accent-ink, from the hash of the stage id) unless the
+   * teacher picked one of the curated LL.COLOR_ROLES. Never a free colour.
    */
   var DECO_HANDLES = {
     nw: { left: 1, top: 1 }, n: { top: 1 }, ne: { right: 1, top: 1 },
@@ -834,9 +834,21 @@
   }
 
   /* Path of a bound field relative to its stage, e.g. ["stages", 2, "data", "mission"] -> "data.mission".
-     Used as the key into stage.textStyle, so the same field keeps its style across renders and mechanic edits. */
+     A list item is named by its permanent id, never its position: ["stages", 2, "data", "items", 1, "text"]
+     -> "data.items[q2].text", so a style follows its item through reorder / delete / base changes.
+     Used as the key into stage.textStyle. */
   function textStyleKey(path) {
-    return path.slice(2).join(".");
+    if (path[0] !== "stages") return "";
+    var node = S.lesson.stages[path[1]];
+    var key = "";
+    for (var i = 2; i < path.length; i++) {
+      var seg = path[i];
+      var item = Array.isArray(node) ? node[seg] : undefined;
+      if (item && typeof item === "object" && typeof item.id === "string") key += "[" + item.id + "]";
+      else key += (key ? "." : "") + seg;
+      node = node == null ? undefined : node[seg];
+    }
+    return key;
   }
 
   /* Apply any teacher-set alignment / size / colour override for this field. Never font; position
@@ -999,7 +1011,7 @@
   }
 
   function clearTextPosition(key) {
-    mutate("textpos:" + key, function (l) {
+    mutate(null, function (l) { // always its own undo step, even right after a drag of the same field
       var st = l.stages[S.stage];
       if (!st.textStyle || !st.textStyle[key]) return;
       var entry = Object.assign({}, st.textStyle[key]);

@@ -217,9 +217,9 @@
     // Optional audio cue: metadata only (the app plays no audio).
     if (stage.audioCue !== undefined && typeof stage.audioCue !== "string")
       p.push("audioCue must be text, e.g. \"Listen: Track 3\".");
-    // Optional decorative shapes. Their colour is never stored: it comes from the stage's palette.
+    // Optional decorative shapes: position, independent w/h, curated colour role, front/back.
     decorationProblems(stage.decorations).forEach(function (x) { p.push(x); });
-    // Optional per-field text style overrides (alignment, size). Never colour or font.
+    // Optional per-field text style overrides (align, size, curated colour role, free position). Never font.
     textStyleProblems(stage.textStyle).forEach(function (x) { p.push(x); });
     // Optional paired worksheet label: metadata only (shown in the lesson menu).
     if (stage.worksheetLabel !== undefined && typeof stage.worksheetLabel !== "string")

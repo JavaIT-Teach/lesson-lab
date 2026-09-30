@@ -133,8 +133,14 @@
       var keys = {};
       Object.keys(b).forEach(function (k) { keys[k] = 1; });
       Object.keys(w).forEach(function (k) { keys[k] = 1; });
+      // An object whose keys the path syntax cannot address (e.g. a stage's textStyle, keyed by field
+      // path) is recorded whole, so no edit inside it is ever dropped.
+      if (segs.length && Object.keys(keys).some(function (k) { return !KEY_RE.test(k); })) {
+        if (!equal(b, w)) out[pathKey(segs)] = { op: "set", v: clone(w) };
+        return;
+      }
       Object.keys(keys).forEach(function (k) {
-        if (!KEY_RE.test(k)) return; // unaddressable key; never produced by the app
+        if (!KEY_RE.test(k)) return; // unaddressable key at the lesson root; never produced by the app
         var inB = b[k] !== undefined, inW = w[k] !== undefined;
         var p = segs.concat(k);
         if (inB && !inW) out[pathKey(p)] = { op: "unset" };
