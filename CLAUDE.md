@@ -51,7 +51,7 @@ js/store.js                Device storage: overrides cache, conflict log, token,
 js/images.js               Uploaded pictures: resize, preview, device cache (IndexedDB), src rewriting.
 js/sync.js                 GitHub sync: save overrides + uploads, load latest, status.
 js/loader.js               Loads lessons/manifest.js files, then data/overrides/<id>.js for each lesson.
-js/app.js                  Home, lesson player, rail, timer, teacher view, edit mode, settings, keys.
+js/app.js                  Home, lesson menu, lesson player, rail, timer, teacher view, edit mode, settings, keys.
 mechanics/<id>.js          One file per mechanic. Shared by all lessons.
 lessons/manifest.js        List of lesson files to load (browsers cannot list folders offline).
 lessons/<level-id>/<lesson-id>.js   Base lesson. One self-contained lesson per file. Data only.
@@ -82,6 +82,7 @@ LL.registerLesson({
       title: "Warm-up",
       minutes: 3,                  // number above 0; drives the stage timer
       audioCue: "Listen: Track 3", // OPTIONAL short text; metadata only (the app plays no audio)
+      worksheetLabel: "Worksheet Part 2", // OPTIONAL short text; metadata only (paired printed worksheet)
       mechanic: "prompt-card",     // id of a registered mechanic (see MECHANICS.md)
       data: {                      // exactly the fields that mechanic's schema defines
         // Every list inside data holds objects, and every item has a PERMANENT id,
@@ -98,6 +99,8 @@ LL.registerLesson({
 ```
 
 `audioCue` (optional): a short text such as `"Listen: Track 3"`. If a stage has it, a headphones badge shows next to the stage title in both student and teacher view, and in the teacher panel. It is editable in edit mode (in place and in the side panel). Leave it out when the stage has no recording. If present it must be text.
+
+`worksheetLabel` (optional): a short text such as `"Worksheet Part 2"`. It marks that the stage has a paired printed worksheet and names it. Metadata only: it shows with 📝 on that stage's line in the lesson menu and in teacher view, not on the student scene. Editable in edit mode (side panel), no forced value. Leave it out when there is no worksheet. If present it must be text.
 
 To make a lesson appear, add one line to `lessons/manifest.js`: `"<level-id>/<lesson-id>.js"`. Every lesson prompt still needs this line.
 
@@ -147,7 +150,7 @@ Schema field spec: `{ type: "string" | "number" | "boolean" | "list" | "object",
 - `ctx.stage`, `ctx.lesson`, `ctx.stageIndex`.
 - `ctx.state` — a plain object for **live in-stage state** (what is highlighted or revealed, scores, current round). One per lesson + stage. It survives re-renders (teacher view, edits, leaving the stage and coming back) but not a page reload, and it is **never saved**. Anything the teacher toggles live belongs here, not in `data`. Mechanics must drop ids in it that no longer exist in `data`.
 
-`render` may return `{ onKey(event) → true if handled, destroy() }` for in-stage keys (e.g. reveal next item). Arrow keys, PageUp/PageDown and the global letters must keep working. `onKey` is not called in edit mode. Keys a mechanic may use: `N B G O M V P W K` (and Shift+ variants, `Shift+1–9`); never the arrows, PageUp/PageDown, Home/End, Space, `1–9`, `X C R T E H F U A S`, Backspace, Delete, Esc, `?`, Enter. The shared meanings are listed at the top of MECHANICS.md. Mechanic colours should use the scene variables `--ink`, `--accent`, `--accent-ink`, `--shape`.
+`render` may return `{ onKey(event) → true if handled, destroy() }` for in-stage keys (e.g. reveal next item). Arrow keys, PageUp/PageDown and the global letters must keep working. `onKey` is not called in edit mode. Keys a mechanic may use: `N B G O M V P W K` (and Shift+ variants, `Shift+1–9`); never the arrows, PageUp/PageDown, Home/End, Space, `1–9`, `X C R T E H F U A S L`, Backspace, Delete, Esc, `?`, Enter. The shared meanings are listed at the top of MECHANICS.md. Mechanic colours should use the scene variables `--ink`, `--accent`, `--accent-ink`, `--shape`.
 
 Registry rejects a mechanic that is missing any required field and lists it on the home screen.
 
@@ -192,6 +195,14 @@ Backup: Export writes one `.json` file with every lesson's overrides and the con
 5. **Never delete overrides without folding them in.** Never hand-edit an overrides file. Never delete files in `assets/uploads/` that a lesson or override still points to.
 6. Adding a new lesson still needs its line in `lessons/manifest.js`.
 
+## Navigation flow
+
+Home (levels) → level (lesson tiles) → **lesson menu** → stage scene.
+
+- **Lesson menu** (`#/lesson/<id>`): opening a lesson tile lands here, not on stage 1. One numbered line per stage, in order: title, minutes, and 📝 + `worksheetLabel` when the stage has one (⚠ if the stage has problems). Click a line, or `↑ ↓` + `Enter`, or `1–9`, to open that stage. The stage last shown this session is highlighted ("▶ Continue") and focused; stages already shown get a ring on their number. `H` / `Esc` / `Backspace` go back to the lesson list. It is a teacher navigation screen: no edit mode here.
+- **Stage scene** (`#/lesson/<id>/<n>`): unchanged — rail, ‹ › / arrows, per-stage timer, teacher view, edit mode. `L` or the ☰ HUD button returns to the lesson menu; `H` / ⌂ / `Esc` still go back to the lesson list.
+- Where the teacher left off (last stage, stages shown) is kept in memory for the session only, like timers and `ctx.state`; a page reload clears it.
+
 ## Design principles
 
 1. **Not slides.** No slide numbers, no title + bullets, no deck look. Each stage is a scene with motion and its own identity.
@@ -203,7 +214,8 @@ Backup: Export writes one `.json` file with every lesson's overrides and the con
 ## Key map (current)
 
 In-stage keys (per mechanic, listed by `?` and in teacher view): see MECHANICS.md.
-Lesson: `→`/`PageDown` next · `←`/`PageUp` previous · `1–9` jump · `Home`/`End` · `Space` timer start/pause · `X` reset timer · `C` fold/unfold timer (remembered) · `R` fold/unfold rail · `T` teacher view · `H`/`Backspace` back to lesson list.
+Lesson: `→`/`PageDown` next · `←`/`PageUp` previous · `1–9` jump · `Home`/`End` · `Space` timer start/pause · `X` reset timer · `C` fold/unfold timer (remembered) · `R` fold/unfold rail · `T` teacher view · `L` lesson menu · `H`/`Backspace` back to lesson list.
+Lesson menu: `↑ ↓` + `Enter` or `1–9` open a stage · `H`/`Esc`/`Backspace` back to lesson list.
 Edit: `E` toggle · `Ctrl+Z`/`U` undo · `A` add stage · `Alt+↑/↓` move stage · `Delete` delete stage · `Esc` stop typing / leave.
 Home: `S` settings.
 Anywhere: `?` keys · `F` full screen · arrows + `Enter` on home · `Esc` back.

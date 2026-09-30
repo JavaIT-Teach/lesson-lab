@@ -215,6 +215,9 @@
     // Optional audio cue: metadata only (the app plays no audio).
     if (stage.audioCue !== undefined && typeof stage.audioCue !== "string")
       p.push("audioCue must be text, e.g. \"Listen: Track 3\".");
+    // Optional paired worksheet label: metadata only (shown in the lesson menu).
+    if (stage.worksheetLabel !== undefined && typeof stage.worksheetLabel !== "string")
+      p.push("worksheetLabel must be text, e.g. \"Worksheet Part 2\".");
     var m = LL.mechanics[stage.mechanic];
     if (isBlank(stage.mechanic)) p.push("Mechanic is missing.");
     else if (!m) p.push("Mechanic '" + stage.mechanic + "' is not registered. See MECHANICS.md.");

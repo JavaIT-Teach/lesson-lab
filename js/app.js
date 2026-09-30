@@ -25,6 +25,8 @@
     help: false,
     timers: {},
     runtime: {}, // live in-stage state per lesson::stage (ctx.state); memory only, never saved
+    lastStage: {}, // lessonId -> index of the stage last shown (lesson menu: "Continue")
+    visited: {}, // lessonId -> { stageId: true } stages shown this session
     undo: [],
     lastKey: null,
     lastTime: 0,
@@ -40,6 +42,8 @@
     var parts = (location.hash || "").replace(/^#\/?/, "").split("/").map(decodeURIComponent);
     if (parts[0] === "level" && LL.levelById(parts[1])) return { view: "level", level: parts[1] };
     if (parts[0] === "settings") return { view: "settings" };
+    // #/lesson/<id> = the lesson menu; #/lesson/<id>/<n> = stage n.
+    if (parts[0] === "lesson" && parts[1] && !parts[2]) return { view: "menu", id: parts[1] };
     if (parts[0] === "lesson" && parts[1]) return { view: "lesson", id: parts[1], stage: Math.max(0, (parseInt(parts[2], 10) || 1) - 1) };
     return { view: "home" };
   }
@@ -57,8 +61,11 @@
     }
     S.route = r;
     S.help = false;
-    if (r.view !== "lesson") {
+    if (r.view === "menu") {
+      renderMenu(r.id);
+    } else if (r.view !== "lesson") {
       stopTicking();
+      destroyScene();
       S.editing = false;
       S.teacher = false;
       S.lessonId = null;
@@ -177,7 +184,7 @@
   }
 
   function moveHomeFocus(dx, dy) {
-    var tiles = Array.prototype.slice.call(root.querySelectorAll(".tile"));
+    var tiles = Array.prototype.slice.call(root.querySelectorAll(".tile, .menu-row"));
     if (!tiles.length) return;
     var i = tiles.indexOf(document.activeElement);
     if (i < 0) return tiles[0].focus();
@@ -195,6 +202,106 @@
     } else {
       tiles[Math.max(0, Math.min(tiles.length - 1, i + dx))].focus();
     }
+  }
+
+  /* ================= Lesson menu ================= */
+
+  /* Every stage of a lesson, in order. Home → lesson menu → stage. */
+  function renderMenu(id, noPull) {
+    stopTicking();
+    destroyScene();
+    S.editing = false;
+    S.teacher = false;
+    S.lessonId = id;
+    S.derived = LL.clone(LL.store.doc(id));
+    S.lesson = LL.store.effectiveLesson(id);
+    root.innerHTML = "";
+    if (!S.lesson) {
+      root.appendChild(
+        h("div", { class: "fatal" },
+          h("h1", null, "Lesson not found"),
+          h("p", null, "No lesson has the id “" + id + "”. It may have been removed from lessons/manifest.js."),
+          h("button", { class: "btn", onclick: function () { go("#/"); } }, "Back to levels")
+        )
+      );
+      return;
+    }
+    revalidate();
+    var lvl = LL.levelById(S.lesson.level);
+    var li = Math.max(0, LL.levels.indexOf(lvl));
+    var list = stages();
+    var mins = list.reduce(function (a, st) { return a + (Number(st && st.minutes) || 0); }, 0);
+    var last = S.lastStage[id];
+    var seen = S.visited[id] || {};
+
+    var screen = h("div", { class: "home lesson-menu" });
+    screen.appendChild(h("div", { class: "home-bg", "aria-hidden": "true" }, h("i"), h("i"), h("i"), h("i"), h("i")));
+    screen.appendChild(
+      h("div", { class: "crumb" },
+        h("button", { class: "back", onclick: goLevel, title: "Back to lessons (H)" }, "←"),
+        h("div", { class: "menu-head" },
+          h("span", { class: "tile-unit", text: (lvl ? lvl.name + " · " : "") + "Unit " + S.lesson.unit }),
+          h("h2", { class: "crumb-title lvl-text-" + li, text: S.lesson.title || "Untitled lesson" })
+        )
+      )
+    );
+    screen.appendChild(
+      h("p", { class: "menu-meta" },
+        list.length + (list.length === 1 ? " stage" : " stages") + " · " + mins + " min",
+        LL.store.hasEdits(id) ? h("em", { class: "badge badge-edit", text: "Has teacher edits" }) : null,
+        S.valid.count ? h("em", { class: "badge badge-warn", text: "⚠ " + S.valid.count + (S.valid.count === 1 ? " problem" : " problems") }) : null
+      )
+    );
+
+    var ol = h("ol", { class: "menu-list", "aria-label": "Stages" });
+    if (!list.length) ol.appendChild(h("li", { class: "empty", text: "This lesson has no stages." }));
+    list.forEach(function (st, i) {
+      st = st || {};
+      var bad = S.valid.stages[i] && S.valid.stages[i].length;
+      ol.appendChild(h("li", null,
+        h("button", {
+          class: "menu-row lvl-" + li + (i === last ? " current" : "") + (seen[st.id] ? " seen" : "") + (bad ? " invalid" : ""),
+          style: { animationDelay: Math.min(i * 35, 500) + "ms" },
+          onclick: function () { go("#/lesson/" + encodeURIComponent(id) + "/" + (i + 1)); },
+          title: bad ? "This stage has problems" : ""
+        },
+          h("span", { class: "menu-num", text: String(i + 1) }),
+          h("span", { class: "menu-title", text: st.title || "Untitled" }),
+          st.worksheetLabel ? h("span", { class: "menu-ws", title: "Paired worksheet" }, h("span", { "aria-hidden": "true", text: "📝" }), " ", st.worksheetLabel) : null,
+          bad ? h("span", { class: "menu-bad", text: "⚠" }) : null,
+          i === last ? h("span", { class: "menu-here", text: "▶ Continue" }) : null,
+          h("span", { class: "menu-min", text: (st.minutes || "?") + " min" })
+        )
+      ));
+    });
+    screen.appendChild(ol);
+    screen.appendChild(h("p", { class: "home-hint" }, "↑ ↓ + Enter or ", h("kbd", null, "1–9"), " open a stage · ", h("kbd", null, "L"), " in a stage comes back here · ", h("kbd", null, "H"), " lesson list · ", h("kbd", null, "?"), " keys"));
+    root.appendChild(screen);
+    renderHelp();
+
+    var rows = screen.querySelectorAll(".menu-row");
+    var target = rows[last !== undefined && rows[last] ? last : 0];
+    if (target) target.focus({ preventScroll: false });
+    if (!noPull) LL.sync.pullOne(id); // newest teacher edits from the repo; onRemoteChange refreshes
+  }
+
+  function openMenu() {
+    if (S.lessonId) go("#/lesson/" + encodeURIComponent(S.lessonId));
+  }
+
+  /* Remember where the teacher is, for the lesson menu. */
+  function markVisited() {
+    var st = currentStage();
+    if (!S.lessonId || !st) return;
+    S.lastStage[S.lessonId] = S.stage;
+    (S.visited[S.lessonId] = S.visited[S.lessonId] || {})[st.id] = true;
+  }
+
+  function destroyScene() {
+    if (S.sceneHandle && typeof S.sceneHandle.destroy === "function") {
+      try { S.sceneHandle.destroy(); } catch (e) { /* ignore */ }
+    }
+    S.sceneHandle = null;
   }
 
   /* ================= Lesson player ================= */
@@ -260,6 +367,7 @@
       hudBtn("T", "Teacher view (T)", function () { setTeacher(!S.teacher); }, "b-teacher"),
       hudBtn("✎", "Edit mode (E)", function () { setEditing(!S.editing); }, "b-edit"),
       hudBtn("?", "Keys (?)", function () { setHelp(!S.help); }),
+      hudBtn("☰", "Lesson menu: all stages (L)", openMenu, "b-menu"),
       hudBtn("⌂", "Back to lessons (H)", goLevel)
     );
     el.hud.appendChild(el.hudButtons);
@@ -280,6 +388,7 @@
 
   function syncHash() {
     if (S.route.view !== "lesson" || !S.lessonId) return;
+    markVisited();
     history.replaceState(null, "", "#/lesson/" + encodeURIComponent(S.lessonId) + "/" + (S.stage + 1));
   }
 
@@ -348,10 +457,7 @@
   }
 
   function renderScene(dir) {
-    if (S.sceneHandle && typeof S.sceneHandle.destroy === "function") {
-      try { S.sceneHandle.destroy(); } catch (e) { /* ignore */ }
-    }
-    S.sceneHandle = null;
+    destroyScene();
 
     var st = currentStage();
     var seed = hash(String((st && st.id) || S.stage));
@@ -653,6 +759,7 @@
       h("h2", { class: "panel-title", text: st.title || "Untitled stage" }),
       h("p", { class: "panel-meta", text: (st.minutes || "?") + " min · " + (st.mechanic || "no mechanic") }),
       st.audioCue ? h("p", { class: "panel-audio" }, audioIcon(), h("span", { text: st.audioCue })) : null,
+      st.worksheetLabel ? h("p", { class: "panel-audio" }, h("span", { "aria-hidden": "true", text: "📝" }), h("span", { text: st.worksheetLabel })) : null,
       h("dl", { class: "rationale" },
         h("dt", null, "Language it forces"), h("dd", { text: r.language || "— missing —" }),
         h("dt", null, "Students produce"), h("dd", { text: r.output || "— missing —" })
@@ -835,6 +942,7 @@
     title: { type: "string", required: true, label: "Stage title" },
     minutes: { type: "number", required: true, label: "Minutes", min: 1 },
     audioCue: { type: "string", label: "Audio cue", placeholder: "Listen: Track 3", help: "Optional. Shown as a badge next to the stage title. The app plays no audio." },
+    worksheetLabel: { type: "string", label: "Worksheet", placeholder: "Worksheet Part 2", help: "Optional. The paired printed worksheet, if any. Shown with 📝 in the lesson menu and teacher view." },
     rationale: {
       type: "object",
       label: "Rationale (required)",
@@ -998,6 +1106,7 @@
   LL.sync.onRemoteChange(function (id) {
     announceConflicts();
     if (S.route.view === "level" || S.route.view === "home") return renderHome();
+    if (S.route.view === "menu") return S.lessonId === id ? renderMenu(id, true) : undefined;
     if (S.route.view !== "lesson" || S.lessonId !== id || !S.lesson) return;
     var stageId = currentStage() && currentStage().id;
     S.derived = LL.clone(LL.store.doc(id));
@@ -1176,7 +1285,13 @@
       ["C", "Hide / show timer"],
       ["R", "Hide / show stage rail"],
       ["T", "Teacher view (notes, rationale)"],
+      ["L", "Lesson menu (all stages)"],
       ["H", "Back to lesson list"]
+    ]],
+    ["Lesson menu", [
+      ["↑ ↓  Enter", "Choose a stage and open it"],
+      ["1 – 9", "Open that stage"],
+      ["H  Esc  Backspace", "Back to lesson list"]
     ]],
     ["Edit mode", [
       ["E", "Edit mode on / off"],
@@ -1272,6 +1387,7 @@
       if (inLesson && S.editing) return setEditing(false);
       if (inLesson && S.teacher) return setTeacher(false);
       if (inLesson) return goLevel();
+      if (S.route.view === "menu") return goLevel();
       if (S.route.view === "level" || S.route.view === "settings") return go("#/");
       return;
     }
@@ -1294,6 +1410,14 @@
       if (k === "ArrowUp") { e.preventDefault(); return moveHomeFocus(0, -1); }
       if (S.route.view === "settings") {
         if (k === "Backspace") { e.preventDefault(); go("#/"); }
+        return;
+      }
+      if (S.route.view === "menu") {
+        if (k === "Backspace" || k === "h" || k === "H") { e.preventDefault(); return goLevel(); }
+        if (/^[1-9]$/.test(k)) {
+          var row = root.querySelectorAll(".menu-row")[Number(k) - 1];
+          if (row) row.click();
+        }
         return;
       }
       if (k === "Backspace" && S.route.view === "level") { e.preventDefault(); return go("#/"); }
@@ -1326,6 +1450,7 @@
         LL.store.setPref("railFolded", S.prefs.railFolded);
         return applyPlayerClasses();
       case "t": case "T": return setTeacher(!S.teacher);
+      case "l": case "L": return openMenu();
       case "e": case "E": return setEditing(!S.editing);
       case "h": case "H": case "Backspace": e.preventDefault(); return goLevel();
     }
