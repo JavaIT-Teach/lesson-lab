@@ -9,7 +9,7 @@ window.LL.overrides["starter-in-the-classroom"] = {
   "lesson": "starter-in-the-classroom",
   "format": 1,
   "resetAt": 0,
-  "updatedAt": 1790772691232,
+  "updatedAt": 1790772699186,
   "entries": {
     "stages[meet-classmates].data.mission": {
       "op": "set",
@@ -18,17 +18,8 @@ window.LL.overrides["starter-in-the-classroom"] = {
       "by": "device-u4chzx"
     },
     "stages[meet-classmates].decorations": {
-      "op": "set",
-      "v": [
-        {
-          "id": "shape-pqyfs1",
-          "shape": "rectangle",
-          "x": 21.1,
-          "y": 24.4,
-          "size": 36
-        }
-      ],
-      "t": 1790772691232,
+      "op": "none",
+      "t": 1790772699186,
       "by": "device-u4chzx"
     }
   }
