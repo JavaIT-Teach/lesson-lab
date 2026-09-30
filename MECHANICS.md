@@ -91,7 +91,7 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 - **Lists / item ids:** `items[].id`. Revealed answers are live state keyed by these ids.
 - **Lessons that use it:**
   - `beginner/sample-mechanics` (SAMPLE — stage `spell-it`: 4 spelling items, one with a picture).
-  - `beginner/starter-in-the-classroom` — `birthday-cakes` (Ex 5 cakes A–F with pictures + Ex 6 answer key), `days-order` (7 days, opens in "all" mode), `days-spelling` (7 misspelled days), `colours-ttt` (9 colour swatches).
+  - `beginner/starter-in-the-classroom` — `birthday-cakes` (Ex 5: cakes A–F with pictures, no audio), `how-old-are-you` (Ex 6 answer key, Ryan–Lara, audioCue "Listen: Track 5"), `days-order` (7 days, opens in "all" mode), `days-spelling` (7 misspelled days), `colours-ttt` (9 colour swatches).
 
 ---
 
@@ -125,7 +125,7 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 ## team-game
 
 - **File:** `mechanics/team-game.js`
-- **What it does:** Two or more teams with live scores, and a caller feed. The pool of items is hidden from students (shown only in teacher view); the caller reveals them one at a time (in order or shuffled) into a big "last called" card and a "called" list everyone sees. For a second round, calling can be handed to a named student: a caller label in teacher view, no turn logic.
+- **What it does:** A caller feed, with optional teams and live scores (no teams = no scoreboard). The pool of items is hidden from students (shown only in teacher view); the caller reveals them one at a time (in order or shuffled) into a big "last called" card and a "called" list everyone sees. For a second round, calling can be handed to a named student: a caller label in teacher view, no turn logic.
 - **Language it forces:** Recognising and saying the pool items (e.g. confusable letter names). The stage's `rationale.language` names it.
 - **What students produce:** Calls (the caller), checks of claims against the called list (teams). The stage's `rationale.output` names it.
 - **Required data fields:**
@@ -133,7 +133,7 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
   | Field           | Type    | Required | Notes |
   |-----------------|---------|----------|-------|
   | `instructions`  | text    | no  | One or two lines on screen. |
-  | `teams`         | list    | yes | At least 2. Each: `id`, `name` (required), `score` (starting score, usually 0). |
+  | `teams`         | list    | no  | Optional. Each: `id`, `name` (required), `score` (starting score, usually 0). **Empty or left out = no scoreboard at all** (no team pills, no score keys, no "Reset scores"); only the last-called card and the called list show — e.g. bingo on paper cards where students report counts aloud. |
   | `pool`          | list    | yes | The hidden caller pool. Each: `id`, `label` (required), `picture` (optional, `format: "image"`). |
   | `shuffle`       | boolean | no  | Call in random order (off = listed order). |
   | `studentCaller` | text    | no  | Name used when `K` hands calling to a student. If empty, the app asks for a name live. |
@@ -144,4 +144,4 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 - **Lists / item ids:** `teams[].id`, `pool[].id`. Called list and scores are live state keyed by these ids.
 - **Lessons that use it:**
   - `beginner/sample-mechanics` (SAMPLE — stage `letter-bingo`: 2 teams, 14-letter shuffled pool).
-  - `beginner/starter-in-the-classroom` — `bingo` (pool = number words one–twenty, shuffled; two placeholder teams because the schema needs 2 — scores unused).
+  - `beginner/starter-in-the-classroom` — `bingo` (pool = number words one–twenty, shuffled; no teams, so no scoreboard).

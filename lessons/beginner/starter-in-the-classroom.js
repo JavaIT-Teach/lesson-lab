@@ -100,9 +100,8 @@ LL.registerLesson({
     },
     {
       id: "birthday-cakes",
-      title: "Birthday Cakes — Answers",
-      minutes: 6,
-      audioCue: "Listen: Track 5",
+      title: "Birthday Cakes",
+      minutes: 3,
       mechanic: "drill-check",
       data: {
         mode: "step",
@@ -113,7 +112,25 @@ LL.registerLesson({
           { id: "cake-c", prompt: "Cake C", answer: "twelve", picture: "assets/starter-in-the-classroom/cake-c.svg", pairCue: "Check your Worksheet Part 3 answers." },
           { id: "cake-d", prompt: "Cake D", answer: "fourteen", picture: "assets/starter-in-the-classroom/cake-d.svg", pairCue: "Check your Worksheet Part 3 answers." },
           { id: "cake-e", prompt: "Cake E", answer: "eight", picture: "assets/starter-in-the-classroom/cake-e.svg", pairCue: "Check your Worksheet Part 3 answers." },
-          { id: "cake-f", prompt: "Cake F", answer: "eleven", picture: "assets/starter-in-the-classroom/cake-f.svg", pairCue: "Check your Worksheet Part 3 answers." },
+          { id: "cake-f", prompt: "Cake F", answer: "eleven", picture: "assets/starter-in-the-classroom/cake-f.svg", pairCue: "Check your Worksheet Part 3 answers." }
+        ]
+      },
+      rationale: {
+        language: "Number words (eight – seventeen); How old are you? / I'm … .",
+        output: "Self- and pair-checked written answers: students compare their Worksheet Part 3 answers with a partner, then check each reveal."
+      },
+      teacherNotes: "Ex 5 answer check only — students already wrote answers on paper. A = nine is the example. Candles are in groups of five. M shows all at once: reveal only the ones pairs disagree on."
+    },
+    {
+      id: "how-old-are-you",
+      title: "How Old Are You?",
+      minutes: 3,
+      audioCue: "Listen: Track 5",
+      mechanic: "drill-check",
+      data: {
+        mode: "step",
+        commitCue: "Check with your partner first.",
+        items: [
           { id: "ex6-ryan", prompt: "Ryan", answer: "Cake D", picture: "", pairCue: "Ex 6 · after Track 5" },
           { id: "ex6-penny", prompt: "Penny", answer: "Cake B", picture: "", pairCue: "Ex 6 · after Track 5" },
           { id: "ex6-jack", prompt: "Jack", answer: "Cake A", picture: "", pairCue: "Ex 6 · after Track 5" },
@@ -124,9 +141,9 @@ LL.registerLesson({
       },
       rationale: {
         language: "Number words (eight – seventeen); How old are you? / I'm … .",
-        output: "Self- and pair-checked written answers: students compare their Worksheet Part 3 / Ex 6 answers with a partner, then check each reveal."
+        output: "Self- and pair-checked written answers: students compare their Ex 6 answers with a partner, then check each reveal."
       },
-      teacherNotes: "Answer check only — students already wrote answers on paper. Cakes A–F first (A = nine is the example). Candles are in groups of five. Then play Track 5 and reveal Ex 6 (Ryan → Penny → Jack → David → Anna → Lara). M shows all at once: reveal only the ones pairs disagree on."
+      teacherNotes: "Ex 6 answer check only. Play Track 5, then reveal Ryan → Penny → Jack → David → Anna → Lara. M shows all at once: reveal only the ones pairs disagree on."
     },
     {
       id: "bingo",
@@ -135,10 +152,7 @@ LL.registerLesson({
       mechanic: "team-game",
       data: {
         instructions: "Listen. Cross out the number on your card. Tell me how many you have!",
-        teams: [
-          { id: "class", name: "Class", score: 0 },
-          { id: "unused", name: "—", score: 0 }
-        ],
+        teams: [],
         pool: [
           { id: "n1", label: "one", picture: "" },
           { id: "n2", label: "two", picture: "" },
@@ -168,7 +182,7 @@ LL.registerLesson({
         language: "Number words 1–20, by ear.",
         output: "Each student says their bingo count aloud (\"I have four!\") at checkpoints; a winner reads back their numbers."
       },
-      teacherNotes: "Students use their own pre-printed paper cards (16 cards). N calls the next number; the screen shows it as a WORD. Say it aloud, don't show the digit. Every 5 calls: 'How many do you have?' — students answer. Teams are placeholders (the mechanic needs two); ignore the scores."
+      teacherNotes: "Students use their own pre-printed paper cards (16 cards). N calls the next number; the screen shows it as a WORD. Say it aloud, don't show the digit. Every 5 calls: 'How many do you have?' — students answer."
     },
     {
       id: "days-order",

@@ -1,6 +1,6 @@
 /*
  * Mechanic: team-game
- * Two or more teams with live scores, and a caller feed: a hidden pool (teacher view only)
+ * Optional teams with live scores (none = no scoreboard), and a caller feed: a hidden pool (teacher view only)
  * the caller reveals one item at a time into a "called" list everyone sees.
  * Calling can be handed to a named student for a second round (a label in teacher view).
  * Scores, the called list and the caller are live state, never saved. See MECHANICS.md.
@@ -22,7 +22,7 @@
 
   LL.registerMechanic({
     id: "team-game",
-    description: "Teams with live scores and a caller feed: the caller reveals items one at a time from a hidden pool into a called list everyone sees.",
+    description: "A caller feed, with optional team scores: the caller reveals items one at a time from a hidden pool into a called list everyone sees.",
     speaking:
       "Not whole-class simultaneous speaking. Speech comes from the caller's turn (teacher, then a student in round 2) " +
       "and from teams checking and challenging claims against the called list. Most students listen and react " +
@@ -31,7 +31,7 @@
     keys: [
       ["N", "Call the next item from the hidden pool"],
       ["B", "Take back the last call"],
-      ["Shift+1 – 9", "+1 point for team 1 – 9"],
+      ["Shift+1 – 9", "+1 point for team 1 – 9 (when the stage has teams)"],
       ["K", "Hand calling to a student / back to the teacher"],
       ["O", "New round: clear the called list (scores stay)"],
       ["Click", "Teacher view: call a pool item · score buttons: + / −"]
@@ -40,7 +40,8 @@
     schema: {
       instructions: { type: "string", multiline: true, label: "Instructions", placeholder: "Listen. Cross out the letter you hear. First team with five shouts BINGO!", help: "Optional. One or two lines on screen." },
       teams: {
-        type: "list", required: true, min: 2, label: "Teams", itemLabel: "Team",
+        type: "list", label: "Teams", itemLabel: "Team",
+        help: "Optional. No teams = no scoreboard: only the called items show (e.g. bingo with paper cards).",
         item: {
           type: "object",
           fields: {
@@ -160,7 +161,7 @@
           ctx.editing ? null : h("button", { class: "tg-pm", title: "+1 (Shift+" + (i + 1) + ")", onclick: function () { addPoint(t.id, 1); } }, "+")
         ));
       });
-      wrap.appendChild(teamWrap);
+      if (teams.length) wrap.appendChild(teamWrap); // no teams: no scoreboard at all
 
       // Caller feed: hidden pool, teacher view (and edit mode) only.
       var feed = null;
@@ -230,7 +231,7 @@
           h("span", null, "Round ", h("b", { text: String(st.round) })),
           h("span", null, "Next: ", h("b", { text: next ? byId[next].label : "— pool empty —" })),
           h("span", { class: "tg-feed-note", text: "Teacher view only · click an item to call it" }),
-          ctx.editing ? null : h("button", { class: "btn", onclick: function () {
+          ctx.editing || !teams.length ? null : h("button", { class: "btn", onclick: function () {
             teams.forEach(function (t) { st.scores[t.id] = Number(t.score) || 0; });
             drawScores();
           } }, "Reset scores")
