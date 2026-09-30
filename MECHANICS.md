@@ -5,6 +5,8 @@ One entry per mechanic in `mechanics/`. Reuse before building. Update this file 
 Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 - A list field holds objects, and every item in lesson data has a permanent `id`. Lists of plain values are rejected.
 - A picture field is a text field with `format: "image"`; edit mode adds "Upload / replace image" next to it.
+- Edit mode: a mechanic's data is edited in the toolbar's **Content** popover (its `editor`). Every list field there gets a drag handle (⠿) automatically — dragging changes order only, ids stay, overrides record an `order` edit. No mechanic needs schema changes for this.
+- No colour, font or size choices in any mechanic's edit form (CLAUDE.md design principle 7). Stage-level shapes (`decorations`) take their colour from the scene palette.
 - No walls of text (CLAUDE.md design principle 6): at most about one sentence of instruction as one block of prose; multi-part instructions become a title + short numbered steps.
 - Live in-stage state (highlight, revealed answers, scores, rounds) lives in `ctx.state`: kept while the page is open, never saved, never in `data`.
 - In-stage keys work outside edit mode only. Shared meanings across mechanics: `N` next · `B` back · `O` clear / reset the live state · `M` switch mode · `V` reveal / vary. `?` lists the current stage's keys; teacher view shows them too.
@@ -41,7 +43,7 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 - **Extra validation (`validate`):** a stage needs a non-empty `prompt` or at least one step.
 - **How it keeps every student speaking:** The cue names who speaks with whom. Everyone answers the same prompt (or works through the same steps) at the same time, so no one waits for a turn. It is only as strong as its cue: a stage with no cue risks one-at-a-time answers.
 - **In-stage keys:** none.
-- **Lists / item ids:** `steps[].id`.
+- **Lists / item ids:** `steps[].id` (drag ⠿ to reorder in edit mode).
 - **Lessons that use it:** `beginner/starter-in-the-classroom` — `cheat-sheet-partner` (title + 3 steps + worksheet cue).
 
 ---
@@ -69,7 +71,7 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 - **Extra validation (`validate`):** an item's `group` must match a group id or name; every group must have at least one item; `blankCount` cannot exceed the eligible items; `textColor` must be a colour the browser understands (checked in the browser).
 - **How it keeps every student speaking:** The teacher sets pace and grouping live: the whole class choruses the highlighted item or group together, or pairs name the blanked items before the class says them. It only keeps everyone talking if the stage's rationale plans choral or paired production around it.
 - **In-stage keys:** `N` / `B` highlight next / previous item · `G` highlight next group (after the last group: off) · `O` clear highlight · `M` missing-item mode on/off · `V` blank a new random set (and turn missing-item mode on) · click an item: highlight it, or in missing-item mode blank / unblank it.
-- **Lists / item ids:** `items[].id`, `groups[].id`. Live state refers to these ids; deleted ids drop out.
+- **Lists / item ids:** `items[].id`, `groups[].id` (both drag-reorderable in edit mode; grid order follows `items`). Live state refers to these ids; deleted ids drop out.
 - **Lessons that use it:**
   - `beginner/starter-in-the-classroom` — `numbers-1-20` (1–20, one group "-teen: 13–19"), `classroom-objects` (13 pictures), `colours-stroop` (9 colour words with a different `textColor` each).
 
@@ -91,7 +93,7 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 
 - **How it keeps every student speaking:** Every student commits before anything is shown, so no one can wait for a stronger student's answer. Whether that commitment is spoken or written is set by the pair cue / commit cue and stated in `rationale.output`.
 - **In-stage keys:** `N` / `B` next / previous item (in "all" mode: moves the focus) · `V` reveal / hide the current item's answer · `Shift+V` reveal all / hide all · `M` switch step ↔ all · `O` hide every answer · click an item (all mode): reveal / hide that item.
-- **Lists / item ids:** `items[].id`. Revealed answers are live state keyed by these ids.
+- **Lists / item ids:** `items[].id` (drag ⠿ to reorder in edit mode). Revealed answers are live state keyed by these ids.
 - **Lessons that use it:**
   - `beginner/starter-in-the-classroom` — `birthday-cakes` (Ex 5: cakes A–F with pictures, no audio), `how-old-are-you` (Ex 6 answer key, Ryan–Lara, audioCue "Listen: Track 5"), `days-order` (7 days, opens in "all" mode), `days-spelling` (7 misspelled days), `colours-ttt` (9 colour swatches).
 
@@ -117,7 +119,7 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
 
 - **How it keeps every student speaking:** Every student is in a pair or moving to a new partner at the same time, every round. No one watches or waits.
 - **In-stage keys:** `N` next round (swap cue + round timer restart; after the last round: "Mission complete") · `B` back one round · `P` pause / restart the round timer · `W` show the swap cue again · `O` start again from round 1.
-- **Lists / item ids:** `bank[].id`.
+- **Lists / item ids:** `bank[].id` (drag ⠿ to reorder in edit mode).
 - **Lessons that use it:**
   - `beginner/starter-in-the-classroom` — `meet-classmates` (name / spelling / age mingle, 3 rounds, no bank).
 
@@ -142,6 +144,6 @@ Rules that apply to every mechanic (see CLAUDE.md → Mechanic registry rules):
   Live state (never saved): the called list, the call order, team scores, current caller, round number.
 - **How it keeps every student speaking:** It does not make the whole class speak at once. Speech comes from the caller's turn (teacher, then a student) and from teams checking and challenging claims against the called list; most students listen and react most of the time. Pair it with a stage where everyone speaks simultaneously.
 - **In-stage keys:** `N` call the next item · `B` take back the last call · `Shift+1`–`Shift+9` +1 point for team 1–9 · `K` hand calling to a student / back to the teacher · `O` new round (clears the called list, keeps scores) · click `+` / `−` on a team to score · teacher view: click a pool item to call it, "Reset scores" button.
-- **Lists / item ids:** `teams[].id`, `pool[].id`. Called list and scores are live state keyed by these ids.
+- **Lists / item ids:** `teams[].id`, `pool[].id` (both drag-reorderable in edit mode; with `shuffle` on, pool order does not affect calling order). Called list and scores are live state keyed by these ids.
 - **Lessons that use it:**
   - `beginner/starter-in-the-classroom` — `bingo` (pool = number words one–twenty, shuffled; no teams, so no scoreboard).

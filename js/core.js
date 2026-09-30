@@ -215,6 +215,8 @@
     // Optional audio cue: metadata only (the app plays no audio).
     if (stage.audioCue !== undefined && typeof stage.audioCue !== "string")
       p.push("audioCue must be text, e.g. \"Listen: Track 3\".");
+    // Optional decorative shapes. Their colour is never stored: it comes from the stage's palette.
+    decorationProblems(stage.decorations).forEach(function (x) { p.push(x); });
     // Optional paired worksheet label: metadata only (shown in the lesson menu).
     if (stage.worksheetLabel !== undefined && typeof stage.worksheetLabel !== "string")
       p.push("worksheetLabel must be text, e.g. \"Worksheet Part 2\".");
@@ -237,6 +239,30 @@
     }
     return p;
   };
+
+  LL.SHAPES = ["circle", "rectangle", "triangle"];
+
+  /* decorations: [{ id, shape, x, y, size, label? }]; x / y = centre in % of the scene, size in vmin. */
+  function decorationProblems(list) {
+    var p = [];
+    if (list === undefined) return p;
+    if (!Array.isArray(list)) return ["decorations must be a list."];
+    list.forEach(function (d, i) {
+      var at = "Shape " + (i + 1);
+      if (!d || typeof d !== "object") return p.push(at + " is not a valid object.");
+      if (LL.SHAPES.indexOf(d.shape) === -1) p.push(at + ": shape must be one of " + LL.SHAPES.join(", ") + ".");
+      ["x", "y"].forEach(function (k) {
+        if (typeof d[k] !== "number" || isNaN(d[k]) || d[k] < 0 || d[k] > 100) p.push(at + ": " + k + " must be a number from 0 to 100.");
+      });
+      if (typeof d.size !== "number" || isNaN(d.size) || d.size < 3 || d.size > 60) p.push(at + ": size must be a number from 3 to 60.");
+      if (d.label !== undefined && typeof d.label !== "string") p.push(at + ": label must be text.");
+      else if (d.label && d.label.length > 40) p.push(at + ": label is longer than 40 characters — keep it short.");
+      Object.keys(d).forEach(function (k) {
+        if (["id", "shape", "x", "y", "size", "label"].indexOf(k) === -1) p.push(at + ": “" + k + "” is not allowed (no colours or styles: the app chooses them).");
+      });
+    });
+    return p;
+  }
 
   /* Returns { lesson: [problems], stages: [[problems], ...], count } */
   LL.validateLesson = function (lesson, path) {
@@ -289,6 +315,7 @@
       else if (seen[st.id]) p.push(label + ": id '" + st.id + "' is used by another stage.");
       else seen[st.id] = true;
       listIdProblems(st.data, label + " → data", p);
+      if (Array.isArray(st.decorations)) listIdProblems(st.decorations, label + " → decorations", p);
     });
     return p;
   };

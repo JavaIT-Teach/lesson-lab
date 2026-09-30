@@ -110,6 +110,7 @@
     items.forEach(function (_, i) {
       var itemPath = path.concat(i);
       var control = fieldControl(itemSpec, itemPath, (spec.itemLabel || "Item") + " " + (i + 1), api);
+      var grip = h("span", { class: "grip list-grip", title: "Drag to reorder", "aria-hidden": "true", text: "⠿" });
       var tools = h(
         "div",
         { class: "list-tools" },
@@ -117,7 +118,20 @@
         h("button", { type: "button", title: "Move down", disabled: i === items.length - 1, onclick: function () { move(i, 1); } }, "↓"),
         h("button", { type: "button", class: "danger", title: "Delete", onclick: function () { remove(i); } }, "✕")
       );
-      box.appendChild(h("div", { class: "list-row" }, control, tools));
+      box.appendChild(h("div", { class: "list-row" }, grip, control, tools));
+    });
+
+    // Drag to reorder: changes array order only; item ids never change (overrides record an "order" edit).
+    sortable(box, {
+      item: ".list-row",
+      handle: ".list-grip",
+      onDrop: function (from, to) {
+        api.update("list-move", function (lesson) {
+          var arr = LL.getAt(lesson, path);
+          arr.splice(to, 0, arr.splice(from, 1)[0]);
+        });
+        api.refresh();
+      }
     });
 
     box.appendChild(
@@ -158,6 +172,55 @@
   }
 
   /*
+   * Vertical drag-to-reorder with a handle (pointer events: mouse, pen and touch).
+   * opts: { item: selector for direct children, handle: selector inside an item, onDrop(from, to) }
+   * The DOM moves live while dragging; onDrop gets the old and new index (only when it changed).
+   */
+  function sortable(list, opts) {
+    function items() {
+      return Array.prototype.filter.call(list.children, function (c) { return c.matches(opts.item); });
+    }
+    list.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      var handle = e.target.closest(opts.handle);
+      if (!handle || !list.contains(handle)) return;
+      var item = handle.closest(opts.item);
+      if (!item || item.parentNode !== list) return;
+      e.preventDefault();
+      var from = items().indexOf(item);
+      item.classList.add("dragging");
+      list.classList.add("sorting");
+      // Listen on the document: the pointer may be over another row when it is released.
+      function move(ev) {
+        var all = items();
+        var target = null;
+        for (var i = 0; i < all.length; i++) {
+          if (all[i] === item) continue;
+          var r = all[i].getBoundingClientRect();
+          if (ev.clientY < r.top + r.height / 2) { target = all[i]; break; }
+        }
+        if (target) { if (target !== item.nextSibling) list.insertBefore(item, target); }
+        else {
+          var last = all[all.length - 1];
+          if (last !== item) list.insertBefore(item, last.nextSibling);
+        }
+      }
+      function up() {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+        document.removeEventListener("pointercancel", up);
+        item.classList.remove("dragging");
+        list.classList.remove("sorting");
+        var to = items().indexOf(item);
+        if (to !== from && to !== -1) opts.onDrop(from, to);
+      }
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
+      document.addEventListener("pointercancel", up);
+    });
+  }
+
+  /*
    * Picture fields: format "image" in the schema, or (for mechanics written before
    * that existed) a text field named like picture / image / photo / img.
    */
@@ -191,5 +254,5 @@
     return h("div", { class: "img-tools" }, thumb, btn);
   }
 
-  LL.ui = { h: h, schemaForm: schemaForm, fieldControl: fieldControl, isBlank: isBlank, isImageField: isImageField };
+  LL.ui = { h: h, schemaForm: schemaForm, fieldControl: fieldControl, isBlank: isBlank, isImageField: isImageField, sortable: sortable };
 })();

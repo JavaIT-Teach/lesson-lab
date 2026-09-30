@@ -28,6 +28,8 @@
     lastStage: {}, // lessonId -> index of the stage last shown (lesson menu: "Continue")
     visited: {}, // lessonId -> { stageId: true } stages shown this session
     homeEdit: false, // home screen: E shows the Hide control on lesson tiles
+    pop: null, // edit mode: which toolbar popover is open (null = none)
+    lastEditable: null, // edit mode: last text field focused (target of the list buttons)
     showHidden: false, // home screen: list hidden lessons (with Unhide)
     undo: [],
     lastKey: null,
@@ -436,6 +438,11 @@
     el.stageWrap.appendChild(el.prev);
     el.stageWrap.appendChild(el.next);
     el.stageWrap.appendChild(el.hud);
+    // Edit mode: icon toolbar + one popover at a time (replaces the old side panel).
+    el.toolbar = h("div", { class: "edit-toolbar", role: "toolbar", "aria-label": "Edit tools", hidden: true });
+    el.pop = h("div", { class: "edit-pop", role: "dialog", hidden: true });
+    el.stageWrap.appendChild(el.toolbar);
+    el.stageWrap.appendChild(el.pop);
     el.player.appendChild(el.rail);
     el.player.appendChild(el.stageWrap);
     el.player.appendChild(el.panel);
@@ -466,7 +473,7 @@
     if (!el.player) return;
     el.player.classList.toggle("editing", S.editing);
     el.player.classList.toggle("teacher", S.teacher && !S.editing);
-    el.player.classList.toggle("panel-open", S.editing || S.teacher);
+    el.player.classList.toggle("panel-open", S.teacher && !S.editing);
     el.player.classList.toggle("rail-folded", !!S.prefs.railFolded);
     el.player.classList.toggle("timer-folded", !!S.prefs.timerFolded);
     el.lessonWarn.hidden = !S.valid.lesson.length;
@@ -480,7 +487,8 @@
     stages().forEach(function (st, i) {
       var bad = S.valid.stages[i] && S.valid.stages[i].length;
       list.appendChild(
-        h("li", null,
+        h("li", { class: S.editing ? "rail-row" : null },
+          S.editing ? h("span", { class: "grip rail-grip", title: "Drag to reorder", "aria-hidden": "true", text: "⠿" }) : null,
           h("button", {
             class: "rail-item" + (i === S.stage ? " current" : "") + (i < S.stage ? " done" : "") + (bad ? " invalid" : ""),
             onclick: function () { goTo(i); },
@@ -499,6 +507,8 @@
     ));
     el.rail.appendChild(list);
     if (S.editing) {
+      // Drag to reorder stages: only the order changes; stage ids stay the same.
+      LL.ui.sortable(list, { item: "li", handle: ".rail-grip", onDrop: moveStageTo });
       el.rail.appendChild(h("button", { class: "rail-add", onclick: function () { addStage(); } }, "+ Add stage"));
     }
     var cur = el.rail.querySelector(".current");
@@ -528,6 +538,7 @@
     var bg = h("div", { class: "scene-bg", "aria-hidden": "true" });
     for (var i = 0; i < 6; i++) bg.appendChild(h("i"));
     scene.appendChild(bg);
+    if (st && Array.isArray(st.decorations) && st.decorations.length) scene.appendChild(decorLayer(st));
 
     var content = h("div", { class: "scene-content" });
 
@@ -570,6 +581,128 @@
     el.stageWrap.insertBefore(scene, el.stageWrap.firstChild);
   }
 
+  /* ---------- Decorations (shapes) ----------
+   * Colour is never stored or chosen: shapes use the scene's palette variables
+   * (--accent / --accent-ink), which come from the same hash of the stage id as the background.
+   */
+  function decorLayer(st) {
+    var layer = h("div", { class: "scene-decor", "aria-hidden": S.editing ? null : "true" });
+    st.decorations.forEach(function (d, j) {
+      if (!d || LL.SHAPES.indexOf(d.shape) === -1) return;
+      var node = h("div", { class: "deco deco-" + d.shape, "data-id": d.id });
+      node.style.left = d.x + "%";
+      node.style.top = d.y + "%";
+      node.style.setProperty("--deco-size", d.size);
+      node.style.animationDelay = -(hash(String(d.id)) % 6000) + "ms";
+      node.appendChild(h("div", { class: "deco-fill" }));
+      if (d.label || S.editing) {
+        var label = h("span", { class: "deco-label" });
+        bindPath(label, ["stages", S.stage, "decorations", j, "label"], { placeholder: "Label" });
+        node.appendChild(label);
+      }
+      if (S.editing) {
+        node.tabIndex = 0;
+        node.setAttribute("title", "Drag to move · corner to resize · ✕ or Delete removes");
+        node.appendChild(h("button", { class: "deco-del", type: "button", title: "Remove shape", "aria-label": "Remove shape", onclick: function (e) { e.stopPropagation(); removeDecoration(d.id); } }, "✕"));
+        node.appendChild(h("span", { class: "deco-resize", title: "Drag to resize", "aria-hidden": "true" }));
+        wireDecoration(node, layer, d);
+      }
+      layer.appendChild(node);
+    });
+    return layer;
+  }
+
+  function wireDecoration(node, layer, d) {
+    node.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0 || e.target.closest(".deco-del")) return;
+      var resizing = !!e.target.closest(".deco-resize");
+      var label = node.querySelector(".deco-label");
+      if (!resizing && label && e.target === label && document.activeElement === label) return; // typing in the label
+      var box = layer.getBoundingClientRect();
+      var start = { x: e.clientX, y: e.clientY };
+      var moved = false;
+      var pos = { x: d.x, y: d.y, size: d.size };
+      var vmin = Math.min(window.innerWidth, window.innerHeight) / 100;
+      if (resizing) e.preventDefault();
+      function move(ev) {
+        if (!moved && Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) < 5) return;
+        if (!moved) {
+          moved = true;
+          try { node.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+          if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+          window.getSelection().removeAllRanges();
+          node.classList.add("moving");
+        }
+        if (resizing) {
+          var r = node.getBoundingClientRect();
+          var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+          var half = Math.max(Math.abs(ev.clientX - cx), Math.abs(ev.clientY - cy) * (d.shape === "rectangle" ? 1.5 : 1));
+          pos.size = Math.round(Math.max(3, Math.min(60, (half * 2) / vmin)) * 2) / 2;
+          node.style.setProperty("--deco-size", pos.size);
+        } else {
+          pos.x = Math.round(Math.max(0, Math.min(100, ((ev.clientX - box.left) / box.width) * 100)) * 10) / 10;
+          pos.y = Math.round(Math.max(0, Math.min(100, ((ev.clientY - box.top) / box.height) * 100)) * 10) / 10;
+          node.style.left = pos.x + "%";
+          node.style.top = pos.y + "%";
+        }
+      }
+      function up() {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+        document.removeEventListener("pointercancel", up);
+        if (!moved) return;
+        node.classList.remove("moving");
+        updateDecoration(d.id, resizing ? { size: pos.size } : { x: pos.x, y: pos.y });
+      }
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
+      document.addEventListener("pointercancel", up);
+    });
+  }
+
+  function decoIndex(l, id) {
+    var list = l.stages[S.stage].decorations || [];
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return i;
+    return -1;
+  }
+
+  function insertShape(shape) {
+    var st = currentStage();
+    if (!st) return;
+    var n = (st.decorations || []).length;
+    var d = { id: LL.uid("shape"), shape: shape, x: 80 - (n % 3) * 9, y: 26 + (n % 3) * 12, size: 14 };
+    S.pop = null;
+    mutate(null, function (l) {
+      var s2 = l.stages[S.stage];
+      s2.decorations = (s2.decorations || []).concat(d);
+    });
+    renderToolbar();
+    focusDecoration(d.id);
+    toast("Shape added. Drag it to move, drag its corner to resize. Its colour follows this stage.");
+  }
+
+  function updateDecoration(id, patch) {
+    mutate("deco:" + id + ":" + Object.keys(patch).join(","), function (l) {
+      var i = decoIndex(l, id);
+      if (i !== -1) Object.keys(patch).forEach(function (k) { l.stages[S.stage].decorations[i][k] = patch[k]; });
+    });
+    focusDecoration(id);
+  }
+
+  function removeDecoration(id) {
+    mutate(null, function (l) {
+      var s2 = l.stages[S.stage];
+      s2.decorations = (s2.decorations || []).filter(function (x) { return x && x.id !== id; });
+      if (!s2.decorations.length) delete s2.decorations;
+    });
+    toast("Shape removed. Ctrl+Z brings it back.");
+  }
+
+  function focusDecoration(id) {
+    var node = el.stageWrap && el.stageWrap.querySelector('.scene:not(.leave-fwd):not(.leave-back) .deco[data-id="' + id + '"]');
+    if (node) node.focus({ preventScroll: true });
+  }
+
   function audioIcon() {
     var i = h("span", { class: "scene-audio-icon", "aria-hidden": "true" });
     i.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 14v-2a8 8 0 0 1 16 0v2" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>' +
@@ -590,7 +723,9 @@
         h("div", { class: "scene-error-icon", text: "⚠" }),
         h("h2", { text: title }),
         h("ul", null, (problems || []).map(function (p) { return h("li", { text: p }); })),
-        h("p", { class: "scene-error-hint" }, "Press ", h("kbd", null, "E"), " to fix it in edit mode.")
+        S.editing
+          ? h("p", { class: "scene-error-hint" }, "Fix it from the toolbar above (⚠ lists what is missing).")
+          : h("p", { class: "scene-error-hint" }, "Press ", h("kbd", null, "E"), " to fix it in edit mode.")
       )
     );
   }
@@ -623,6 +758,7 @@
     node.textContent = v == null ? "" : String(v);
     if (!S.editing) return;
     node.classList.add("editable");
+    node._llPath = path;
     if (opts.placeholder) node.setAttribute("data-placeholder", opts.placeholder);
     node.contentEditable = "plaintext-only";
     if (node.contentEditable !== "plaintext-only") node.contentEditable = "true";
@@ -787,17 +923,19 @@
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     S.editing = on;
     S.lastKey = null;
+    S.pop = null;
+    S.lastEditable = null;
     renderAll(0);
-    if (on && !quiet) toast("Edit mode — changes save to GitHub a few seconds after each edit. Ctrl+Z undoes.");
+    if (on && !quiet) toast("Edit mode — click any text to change it. Tools are the icons at the top. Ctrl+Z undoes.");
   }
 
   function renderPanel() {
     if (!el.panel) return;
     var scroll = el.panel.scrollTop;
     el.panel.innerHTML = "";
-    if (S.editing) el.panel.appendChild(editPanel());
-    else if (S.teacher) el.panel.appendChild(teacherPanel());
+    if (S.teacher && !S.editing) el.panel.appendChild(teacherPanel());
     el.panel.scrollTop = scroll;
+    renderToolbar();
   }
 
   function problemList(title, problems) {
@@ -966,11 +1104,21 @@
     renderAll(1);
   }
 
+  /* Delete asks first: the toolbar's Delete (or the Delete key) opens a confirm popover. */
+  function askDeleteStage() {
+    if (!currentStage()) return;
+    if (stages().length === 1) return toast("A lesson needs at least one stage.", true);
+    S.pop = "delete";
+    renderToolbar();
+    var yes = el.pop.querySelector(".btn-danger");
+    if (yes) yes.focus();
+  }
+
   function deleteStage() {
     var st = currentStage();
     if (!st) return;
     if (stages().length === 1) return toast("A lesson needs at least one stage.", true);
-    if (!window.confirm("Delete the stage “" + (st.title || "Untitled") + "”? (You can undo.)")) return;
+    S.pop = null;
     mutate(null, function (l) { l.stages.splice(S.stage, 1); }, { scene: false });
     S.stage = Math.min(S.stage, stages().length - 1);
     renderAll(0);
@@ -985,6 +1133,14 @@
       l.stages[j] = t;
     }, { scene: false });
     S.stage = j;
+    renderAll(0);
+  }
+
+  /* Drag-reorder on the rail: array order only, ids unchanged (an "order" override). */
+  function moveStageTo(from, to) {
+    var cur = currentStage() && currentStage().id;
+    mutate(null, function (l) { l.stages.splice(to, 0, l.stages.splice(from, 1)[0]); }, { scene: false });
+    keepStage(cur);
     renderAll(0);
   }
 
@@ -1021,116 +1177,378 @@
     subAims: { type: "list", label: "Sub-aims", itemLabel: "Sub-aim", item: { type: "string" } }
   };
 
-  function editPanel() {
-    var st = currentStage();
-    var box = h("div", { class: "panel-inner edit-panel" });
+  /* ================= Edit toolbar + popovers ================= */
 
-    box.appendChild(
-      h("div", { class: "edit-bar" },
-        h("b", { class: "edit-badge", text: "EDIT MODE" }),
-        h("button", { class: "btn", onclick: undo, title: "Undo (Ctrl+Z)" }, "↶ Undo"),
-        h("button", { class: "btn btn-primary", onclick: function () { setEditing(false); }, title: "Done (E or Esc)" }, "Done")
-      )
-    );
+  var ICON = {
+    add: '<path d="M4 6h10v12H4z M18 9v6 M15 12h6"/>',
+    trash: '<path d="M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v6 M14 11v6"/>',
+    undo: '<path d="M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3"/>',
+    bullets: '<circle cx="5" cy="7" r="1.6" fill="currentColor"/><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="5" cy="17" r="1.6" fill="currentColor"/><path d="M10 7h10 M10 12h10 M10 17h10"/>',
+    numbers: '<path d="M4 5h2v5 M4 10h3 M4 14.5a1.5 1.5 0 1 1 2.6 1L4 19h3.2 M10 7h10 M10 12h10 M10 17h10"/>',
+    shape: '<circle cx="7.5" cy="8" r="3.5"/><path d="M16.5 4l4 7h-8z"/><rect x="10" y="14" width="10" height="6" rx="1"/>',
+    stage: '<circle cx="12" cy="13" r="7"/><path d="M12 9v4l3 2 M9 3h6"/>',
+    why: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="0.8" fill="currentColor"/>',
+    notes: '<path d="M6 3h9l4 4v14H6z M14 3v5h5 M9 12h7 M9 16h5"/>',
+    content: '<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/>',
+    lesson: '<circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/>',
+    warn: '<path d="M12 3l10 18H2z M12 10v5 M12 18v.5"/>',
+    done: '<path d="M4 12l5 5L20 6"/>',
+    circle: '<circle cx="12" cy="12" r="8"/>',
+    rectangle: '<rect x="3" y="7" width="18" height="11" rx="2"/>',
+    triangle: '<path d="M12 4l9 16H3z"/>'
+  };
 
-    box.appendChild(h("p", { class: "edit-status" }, "GitHub: ", syncPill("edit-sync")));
-
-    el.panelProblems = h("div", { class: "panel-problem-slot" });
-    box.appendChild(el.panelProblems);
-    refreshPanelProblems();
-
-    if (st) {
-      var mechSelect = h("select", { class: "editable-outline", onchange: function () { changeMechanic(mechSelect.value); } });
-      Object.keys(LL.mechanics).forEach(function (id) {
-        mechSelect.appendChild(h("option", { value: id, text: id }));
-      });
-      if (!LL.mechanics[st.mechanic]) mechSelect.insertBefore(h("option", { value: st.mechanic || "", text: (st.mechanic || "none") + " (not registered)" }), mechSelect.firstChild);
-      mechSelect.value = st.mechanic || "";
-
-      var mech = LL.mechanics[st.mechanic];
-      var mechBox = h("div", { class: "mech-editor" });
-      if (mech) {
-        try {
-          mech.editor(mechBox, renderCtx(st, mech));
-        } catch (e) {
-          mechBox.appendChild(h("p", { class: "panel-problems", text: "This mechanic’s editor crashed: " + e.message }));
-        }
-      }
-
-      box.appendChild(
-        h("section", { class: "edit-section" },
-          h("h3", null, "This stage"),
-          h("div", { class: "stage-ops" },
-            h("button", { class: "btn", onclick: function () { moveStage(-1); }, title: "Alt+↑" }, "↑ Move up"),
-            h("button", { class: "btn", onclick: function () { moveStage(1); }, title: "Alt+↓" }, "↓ Move down"),
-            h("button", { class: "btn", onclick: duplicateStage }, "Duplicate"),
-            h("button", { class: "btn", onclick: addStage, title: "A" }, "+ New after"),
-            h("button", { class: "btn btn-danger", onclick: deleteStage, title: "Delete" }, "Delete")
-          ),
-          LL.ui.schemaForm(STAGE_FIELDS, ["stages", S.stage], editApi),
-          h("label", { class: "field" }, h("span", { class: "field-label", text: "Mechanic" }), mechSelect,
-            mech ? h("small", { class: "field-help", text: mech.description }) : null),
-          h("h4", { class: "sub", text: "Content" }),
-          mechBox
-        )
-      );
-    } else {
-      box.appendChild(h("section", { class: "edit-section" },
-        h("p", null, "This lesson has no stages."),
-        h("button", { class: "btn btn-primary", onclick: addStage }, "+ Add first stage")));
-    }
-
-    box.appendChild(
-      h("section", { class: "edit-section" },
-        h("h3", null, "Lesson"),
-        h("p", { class: "field-help", text: "Id: " + S.lesson.id + " · Level: " + ((LL.levelById(S.lesson.level) || {}).name || S.lesson.level) }),
-        LL.ui.schemaForm(LESSON_FIELDS, [], editApi)
-      )
-    );
-
-    var fileInput = h("input", { type: "file", accept: ".json,application/json", hidden: true });
-    fileInput.addEventListener("change", function () {
-      var f = fileInput.files[0];
-      if (!f) return;
-      LL.store.importBackup(f, function (err, res) {
-        if (err) return toast(err, true);
-        var msg = "Imported " + res.count + (res.count === 1 ? " lesson." : " lessons.");
-        if (res.unknown.length) msg += " Not on this app (kept, hidden): " + res.unknown.join(", ") + ".";
-        openLesson(S.lessonId, S.stage);
-        setEditing(true, true);
-        toast(msg);
-      });
-    });
-
-    box.appendChild(
-      h("section", { class: "edit-section" },
-        h("h3", null, "Teacher edits & backup"),
-        h("p", { class: "field-help" },
-          LL.store.hasEdits(S.lessonId)
-            ? "This lesson has teacher edits (kept separately from the lesson file, in data/overrides/" + S.lessonId + ".js)."
-            : "This lesson has no teacher edits: it shows the lesson file as written."),
-        h("div", { class: "stage-ops" },
-          h("button", { class: "btn", onclick: function () {
-            var n = LL.store.exportBackup();
-            toast(n ? "Backup downloaded (" + n + (n === 1 ? " edited lesson)." : " edited lessons).") : "Backup downloaded (no edits yet).");
-          } }, "Export backup"),
-          h("button", { class: "btn", onclick: function () { fileInput.click(); } }, "Import backup"),
-          h("button", { class: "btn btn-danger", onclick: resetToOriginal, title: "Clears this lesson’s teacher edits" }, "Reset lesson to original")
-        ),
-        fileInput
-      )
-    );
-
-    return box;
+  function icon(name) {
+    var span = h("span", { class: "tb-icon", "aria-hidden": "true" });
+    span.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + ICON[name] + "</svg>";
+    return span;
   }
 
+  function tbBtn(name, label, fn, opts) {
+    opts = opts || {};
+    var b = h("button", {
+      type: "button",
+      class: "tb-btn" + (opts.cls ? " " + opts.cls : "") + (opts.pop && S.pop === opts.pop ? " active" : ""),
+      title: label,
+      "aria-label": label,
+      "data-pop": opts.pop || null,
+      "aria-expanded": opts.pop ? String(S.pop === opts.pop) : null
+    }, icon(name), opts.badge ? h("span", { class: "tb-badge" + (opts.badgeCls ? " " + opts.badgeCls : ""), text: opts.badge }) : null);
+    // Text tools must not steal focus from the text being formatted.
+    if (opts.keepFocus) b.addEventListener("mousedown", function (e) { e.preventDefault(); });
+    b.addEventListener("click", fn);
+    return b;
+  }
+
+  function togglePop(name) {
+    S.pop = S.pop === name ? null : name;
+    renderToolbar();
+  }
+
+  function closePop() {
+    if (!S.pop) return false;
+    S.pop = null;
+    renderToolbar();
+    return true;
+  }
+
+  function stageProblemsOf(prefix) {
+    return (S.valid.stages[S.stage] || []).filter(function (p) { return p.indexOf(prefix) === 0; });
+  }
+
+  function renderToolbar() {
+    if (!el.toolbar) return;
+    if (!S.editing) {
+      el.toolbar.hidden = true;
+      el.toolbar.innerHTML = "";
+      el.pop.hidden = true;
+      el.pop.innerHTML = "";
+      return;
+    }
+    renderToolbarButtons();
+    renderPop();
+  }
+
+  function renderToolbarButtons() {
+    if (!el.toolbar || !S.editing) return;
+    var nProblems = S.valid.lesson.length + (S.valid.stages[S.stage] || []).length;
+    var whyMissing = stageProblemsOf("Rationale").length > 0;
+    var st = currentStage();
+    el.toolbar.innerHTML = "";
+    el.toolbar.hidden = false;
+    el.toolbar.appendChild(h("div", { class: "tb-group" },
+      tbBtn("add", "Add a stage after this one (A)", addStage),
+      tbBtn("trash", "Delete this stage (Delete) — asks first", askDeleteStage, { pop: "delete", cls: "tb-danger" }),
+      tbBtn("undo", "Undo (Ctrl+Z)", undo)
+    ));
+    el.toolbar.appendChild(h("div", { class: "tb-group" },
+      tbBtn("bullets", "Bulleted list: click in a text, then here (Ctrl+Shift+8)", function () { listFormat("bullet"); }, { keepFocus: true }),
+      tbBtn("numbers", "Numbered list: click in a text, then here (Ctrl+Shift+7)", function () { listFormat("number"); }, { keepFocus: true })
+    ));
+    el.toolbar.appendChild(h("div", { class: "tb-group" },
+      tbBtn("shape", "Insert a shape", function () { togglePop("shape"); }, { pop: "shape" })
+    ));
+    el.toolbar.appendChild(h("div", { class: "tb-group" },
+      tbBtn("stage", "This stage: title, minutes, audio, worksheet, mechanic", function () { togglePop("stage"); }, { pop: "stage" }),
+      tbBtn("why", "Why this stage (rationale, required)", function () { togglePop("why"); }, { pop: "why", badge: whyMissing ? "!" : null, badgeCls: "tb-badge-bad" }),
+      tbBtn("notes", "Teacher notes", function () { togglePop("notes"); }, { pop: "notes", badge: st && st.teacherNotes ? "•" : null }),
+      tbBtn("content", "Content: lists and items of this stage", function () { togglePop("content"); }, { pop: "content" }),
+      tbBtn("lesson", "Lesson: title, aims, backup, reset", function () { togglePop("lesson"); }, { pop: "lesson" })
+    ));
+    el.toolbar.appendChild(h("div", { class: "tb-spacer" }));
+    if (nProblems) {
+      el.toolbar.appendChild(tbBtn("warn", nProblems + (nProblems === 1 ? " problem" : " problems") + " — click to see", function () { togglePop("problems"); },
+        { pop: "problems", cls: "tb-warn", badge: String(nProblems), badgeCls: "tb-badge-bad" }));
+    }
+    el.toolbar.appendChild(tbBtn("done", "Done (E or Esc)", function () { setEditing(false); }, { cls: "tb-done" }));
+  }
+
+  function renderPop() {
+    var pop = el.pop;
+    if (!pop) return;
+    if (!S.editing || !S.pop || !POPS[S.pop]) {
+      pop.hidden = true;
+      pop.innerHTML = "";
+      return;
+    }
+    var scroll = pop.scrollTop;
+    var def = POPS[S.pop];
+    pop.innerHTML = "";
+    pop.className = "edit-pop pop-" + S.pop;
+    pop.setAttribute("aria-label", def.title);
+    pop.appendChild(h("div", { class: "pop-head" },
+      h("b", { text: def.title }),
+      h("button", { type: "button", class: "pop-close", "aria-label": "Close (Esc)", title: "Close (Esc)", onclick: closePop }, "✕")
+    ));
+    pop.appendChild(def.build());
+    pop.hidden = false;
+    // Anchor under its toolbar button, kept inside the stage area.
+    var btn = el.toolbar.querySelector('[data-pop="' + S.pop + '"]');
+    var wrapW = el.stageWrap.clientWidth;
+    var w = pop.offsetWidth;
+    var left = btn ? btn.offsetLeft + btn.offsetWidth / 2 - w / 2 : wrapW - w - 12;
+    pop.style.left = Math.max(12, Math.min(wrapW - w - 12, left)) + "px";
+    pop.scrollTop = scroll;
+  }
+
+  var STAGE_BASIC = { title: STAGE_FIELDS.title, minutes: STAGE_FIELDS.minutes, audioCue: STAGE_FIELDS.audioCue, worksheetLabel: STAGE_FIELDS.worksheetLabel };
+
+  var POPS = {
+    "delete": {
+      title: "Delete this stage?",
+      build: function () {
+        var st = currentStage() || {};
+        return h("div", { class: "pop-body" },
+          h("p", null, "“" + (st.title || "Untitled") + "” will be removed from this lesson. Ctrl+Z brings it back."),
+          h("div", { class: "stage-ops" },
+            h("button", { type: "button", class: "btn btn-danger", onclick: deleteStage }, "Delete stage"),
+            h("button", { type: "button", class: "btn", onclick: closePop }, "Cancel")
+          )
+        );
+      }
+    },
+    shape: {
+      title: "Insert a shape",
+      build: function () {
+        return h("div", { class: "pop-body" },
+          h("div", { class: "shape-picks" }, LL.SHAPES.map(function (sh) {
+            return h("button", { type: "button", class: "shape-pick", title: sh, "aria-label": "Insert " + sh, onclick: function () { insertShape(sh); } },
+              icon(sh), h("span", { text: sh.charAt(0).toUpperCase() + sh.slice(1) }));
+          })),
+          h("p", { class: "field-help", text: "Colour matches this stage automatically. Drag to move, drag the corner to resize, ✕ removes." })
+        );
+      }
+    },
+    stage: {
+      title: "This stage",
+      build: function () {
+        var st = currentStage();
+        if (!st) return h("div", { class: "pop-body" }, h("button", { class: "btn btn-primary", onclick: addStage }, "+ Add first stage"));
+        var mechSelect = h("select", { class: "editable-outline", onchange: function () { changeMechanic(mechSelect.value); } });
+        Object.keys(LL.mechanics).forEach(function (id) { mechSelect.appendChild(h("option", { value: id, text: id })); });
+        if (!LL.mechanics[st.mechanic]) mechSelect.insertBefore(h("option", { value: st.mechanic || "", text: (st.mechanic || "none") + " (not registered)" }), mechSelect.firstChild);
+        mechSelect.value = st.mechanic || "";
+        var mech = LL.mechanics[st.mechanic];
+        return h("div", { class: "pop-body" },
+          LL.ui.schemaForm(STAGE_BASIC, ["stages", S.stage], editApi),
+          h("label", { class: "field" }, h("span", { class: "field-label", text: "Mechanic" }), mechSelect,
+            mech ? h("small", { class: "field-help", text: mech.description }) : null),
+          h("div", { class: "stage-ops" },
+            h("button", { type: "button", class: "btn", onclick: function () { moveStage(-1); }, title: "Alt+↑" }, "↑ Earlier"),
+            h("button", { type: "button", class: "btn", onclick: function () { moveStage(1); }, title: "Alt+↓" }, "↓ Later"),
+            h("button", { type: "button", class: "btn", onclick: duplicateStage }, "Duplicate")
+          )
+        );
+      }
+    },
+    why: {
+      title: "Why this stage (required)",
+      build: function () {
+        return h("div", { class: "pop-body" },
+          problemList("Missing", stageProblemsOf("Rationale")),
+          LL.ui.schemaForm({ rationale: STAGE_FIELDS.rationale }, ["stages", S.stage], editApi));
+      }
+    },
+    notes: {
+      title: "Teacher notes",
+      build: function () {
+        return h("div", { class: "pop-body" }, LL.ui.schemaForm({ teacherNotes: STAGE_FIELDS.teacherNotes }, ["stages", S.stage], editApi));
+      }
+    },
+    content: {
+      title: "Content",
+      build: function () {
+        var st = currentStage();
+        var mech = st && LL.mechanics[st.mechanic];
+        var box = h("div", { class: "pop-body mech-editor" });
+        if (!mech) {
+          box.appendChild(h("p", { class: "field-help", text: "Choose a mechanic first (clock icon)." }));
+          return box;
+        }
+        var fix = problemList("To fix", stageProblemsOf("Data"));
+        if (fix) box.appendChild(fix);
+        try {
+          mech.editor(box, renderCtx(st, mech));
+        } catch (e) {
+          box.appendChild(h("p", { class: "panel-problems", text: "This mechanic’s editor crashed: " + e.message }));
+        }
+        return box;
+      }
+    },
+    lesson: {
+      title: "Lesson",
+      build: function () {
+        var fileInput = h("input", { type: "file", accept: ".json,application/json", hidden: true });
+        fileInput.addEventListener("change", function () {
+          var f = fileInput.files[0];
+          if (!f) return;
+          LL.store.importBackup(f, function (err, res) {
+            if (err) return toast(err, true);
+            var msg = "Imported " + res.count + (res.count === 1 ? " lesson." : " lessons.");
+            if (res.unknown.length) msg += " Not on this app (kept, hidden): " + res.unknown.join(", ") + ".";
+            openLesson(S.lessonId, S.stage);
+            setEditing(true, true);
+            toast(msg);
+          });
+        });
+        return h("div", { class: "pop-body" },
+          LL.ui.schemaForm(LESSON_FIELDS, [], editApi),
+          h("p", { class: "field-help" }, "GitHub: ", syncPill("edit-sync"),
+            LL.store.hasEdits(S.lessonId) ? " · This lesson has teacher edits." : " · No teacher edits yet."),
+          h("div", { class: "stage-ops" },
+            h("button", { type: "button", class: "btn", onclick: function () {
+              var n = LL.store.exportBackup();
+              toast(n ? "Backup downloaded (" + n + (n === 1 ? " edited lesson)." : " edited lessons).") : "Backup downloaded (no edits yet).");
+            } }, "Export backup"),
+            h("button", { type: "button", class: "btn", onclick: function () { fileInput.click(); } }, "Import backup"),
+            h("button", { type: "button", class: "btn btn-danger", onclick: resetToOriginal, title: "Clears this lesson’s teacher edits" }, "Reset lesson")
+          ),
+          fileInput
+        );
+      }
+    },
+    problems: {
+      title: "Problems",
+      build: function () {
+        var a = problemList("Lesson", S.valid.lesson);
+        var b = problemList("This stage can’t run yet", S.valid.stages[S.stage]);
+        return h("div", { class: "pop-body" }, a, b, !a && !b ? h("p", { class: "field-help", text: "No problems." }) : null);
+      }
+    }
+  };
+
+  /* ---------- Bulleted / numbered lists: plain "• " and "1. " characters in the text itself ---------- */
+
+  var LIST_PREFIX = /^(• |\d+\. )/;
+
+  /* Toggle a list on the lines touched by [s, e). Returns { text, s, e }. */
+  function formatLines(text, s, e, kind) {
+    var ls = text.lastIndexOf("\n", s - 1) + 1;
+    var endPos = e > s && text.charAt(e - 1) === "\n" ? e - 1 : e;
+    var le = text.indexOf("\n", endPos);
+    if (le === -1) le = text.length;
+    var lines = text.slice(ls, le).split("\n");
+    var want = kind === "bullet" ? /^• / : /^\d+\. /;
+    var filled = lines.filter(function (l) { return l.replace(LIST_PREFIX, "").trim(); });
+    var off = filled.length > 0 && filled.every(function (l) { return want.test(l); });
+    var n = 0;
+    if (kind === "number" && !off && ls > 0) {
+      // Continue the numbering of the line just above, if it is numbered.
+      var above = text.slice(0, ls - 1);
+      var m = /^(\d+)\. /.exec(above.slice(above.lastIndexOf("\n") + 1));
+      if (m) n = Number(m[1]);
+    }
+    var out;
+    if (!filled.length) out = [kind === "bullet" ? "• " : n + 1 + ". "]; // empty line: start a list
+    else out = lines.map(function (l) {
+      var bare = l.replace(LIST_PREFIX, "");
+      if (off || !bare.trim()) return bare;
+      n += 1;
+      return (kind === "bullet" ? "• " : n + ". ") + bare;
+    });
+    var block = out.join("\n");
+    return { text: text.slice(0, ls) + block + text.slice(le), s: filled.length ? ls : ls + block.length, e: ls + block.length };
+  }
+
+  /* Text and selection of a contentEditable field (line breaks as "\n"). */
+  function editableModel(node) {
+    var sel = window.getSelection();
+    var r = sel.rangeCount ? sel.getRangeAt(0) : null;
+    if (r && !node.contains(r.startContainer)) r = null;
+    var text = "", s = null, e = null;
+    function at(container, offset) {
+      if (r && container === r.startContainer && offset === r.startOffset && s === null) s = text.length;
+      if (r && container === r.endContainer && offset === r.endOffset && e === null) e = text.length;
+    }
+    (function walk(n) {
+      if (n.nodeType === 3) {
+        if (r && n === r.startContainer) s = text.length + r.startOffset;
+        if (r && n === r.endContainer) e = text.length + r.endOffset;
+        text += n.data;
+        return;
+      }
+      if (n.nodeName === "BR") { text += "\n"; return; }
+      for (var i = 0; i < n.childNodes.length; i++) { at(n, i); walk(n.childNodes[i]); }
+      at(n, n.childNodes.length);
+    })(node);
+    if (/\n$/.test(text) && node.lastChild && node.lastChild.nodeName === "BR") text = text.slice(0, -1); // trailing <br> quirk
+    if (s === null) s = text.length;
+    if (e === null) e = s;
+    return { text: text, s: Math.min(s, text.length), e: Math.min(e, text.length) };
+  }
+
+  function listFormat(kind) {
+    if (!S.editing) return;
+    var t = S.lastEditable;
+    if (!t || !document.body.contains(t)) return toast("Click into a text first, then choose the list button.");
+    if (t.isContentEditable) {
+      var m = editableModel(t);
+      var res = formatLines(m.text, m.s, m.e, kind);
+      t.textContent = res.text;
+      t.focus();
+      var range = document.createRange();
+      var tn = t.firstChild;
+      if (tn) {
+        range.setStart(tn, res.s);
+        range.setEnd(tn, res.e);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      var path = t._llPath;
+      if (path) mutate("set:" + path.join("."), function (l) { LL.setAt(l, path, res.text); }, { scene: false });
+    } else {
+      var r2 = formatLines(t.value, t.selectionStart, t.selectionEnd, kind);
+      t.value = r2.text;
+      t.focus();
+      t.setSelectionRange(r2.s, r2.e);
+      t.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+
+  // Remember the last text field the teacher clicked into (scene text or a popover field).
+  document.addEventListener("focusin", function (e) {
+    if (!S.editing) return;
+    var t = e.target;
+    if ((t.isContentEditable && t.classList.contains("editable")) ||
+        (el.pop && el.pop.contains(t) && (t.tagName === "TEXTAREA" || (t.tagName === "INPUT" && t.type === "text")))) {
+      S.lastEditable = t;
+    }
+  });
+
+  // A click outside the toolbar and the open popover closes the popover.
+  document.addEventListener("pointerdown", function (e) {
+    if (!S.editing || !S.pop || !el.pop) return;
+    var t = e.target;
+    if (el.pop.contains(t) || el.toolbar.contains(t) || t.closest(".modal") || t.closest(".toast")) return;
+    closePop();
+  }, true);
+
+  /* After each edit: refresh the toolbar badges (problem count, missing rationale) without rebuilding the open popover. */
   function refreshPanelProblems() {
-    if (!S.editing || !el.panelProblems) return;
-    el.panelProblems.innerHTML = "";
-    var a = problemList("Lesson problems", S.valid.lesson);
-    var b = problemList("This stage can’t run yet", S.valid.stages[S.stage]);
-    if (a) el.panelProblems.appendChild(a);
-    if (b) el.panelProblems.appendChild(b);
+    if (!S.editing) return;
+    renderToolbarButtons();
+    if (S.pop === "problems") renderPop();
   }
 
   function resetToOriginal() {
@@ -1358,8 +1776,9 @@
       ["Ctrl+Z  or  U", "Undo"],
       ["A", "Add a stage after this one"],
       ["Alt+↑ / Alt+↓", "Move this stage"],
-      ["Delete", "Delete this stage"],
-      ["Esc", "Stop typing / leave edit mode"]
+      ["Delete", "Delete this stage (asks first) · a selected shape: remove it"],
+      ["Ctrl+Shift+8 / 7", "Bulleted / numbered list on the current line(s)"],
+      ["Esc", "Stop typing / close the open tool / leave edit mode"]
     ]],
     ["Home screen", [
       ["S", "Settings (GitHub sync, backup)"],
@@ -1435,6 +1854,13 @@
     var inLesson = S.route.view === "lesson" && S.lesson;
     var k = e.key;
 
+    // Lists while typing: Ctrl+Shift+8 bullets, Ctrl+Shift+7 numbers.
+    if (inLesson && S.editing && (e.ctrlKey || e.metaKey) && e.shiftKey && (e.code === "Digit8" || e.code === "Digit7")) {
+      e.preventDefault();
+      listFormat(e.code === "Digit8" ? "bullet" : "number");
+      return;
+    }
+
     // Undo is ours in edit mode, even while typing (keeps one undo history).
     if (inLesson && S.editing && (e.ctrlKey || e.metaKey) && !e.shiftKey && k.toLowerCase() === "z") {
       e.preventDefault();
@@ -1445,6 +1871,7 @@
     if (k === "Escape") {
       if (typing) return e.target.blur();
       if (S.help) return setHelp(false);
+      if (inLesson && S.editing && closePop()) return;
       if (inLesson && S.editing) return setEditing(false);
       if (inLesson && S.teacher) return setTeacher(false);
       if (inLesson) return goLevel();
@@ -1521,7 +1948,11 @@
     if (S.editing) {
       if (k === "u" || k === "U") return undo();
       if (k === "a" || k === "A") return addStage();
-      if (k === "Delete") return deleteStage();
+      if (k === "Delete") {
+        var focused = document.activeElement;
+        if (focused && focused.classList && focused.classList.contains("deco")) return removeDecoration(focused.getAttribute("data-id"));
+        return askDeleteStage();
+      }
     }
   });
 
